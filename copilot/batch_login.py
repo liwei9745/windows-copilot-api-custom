@@ -113,34 +113,43 @@ def login_one(
         bot._page.wait_for_selector('input[name="loginfmt"]', timeout=3000)
         _log(f"[{account_index}] Already on login page.", log_fh)
     except Exception:
-        # Not at login page yet. Click "Sign in" button first.
-        _log(f"[{account_index}] Not on login page. Looking for 'Sign in' button...", log_fh)
-        signin_selectors = [
-            'a[data-testid="sign-in-link"]',
-            '#mectrl_header_signin',
-            'a:has-text("Sign in")',
-            'a:has-text("登录")',
-            'button:has-text("Sign in")',
-            'a[href*="login.live.com"]',
-            '#idSIButton9',  # sometimes already on login page but AAD-based
-        ]
-        clicked = False
-        for sel in signin_selectors:
-            try:
-                btn = bot._page.wait_for_selector(sel, timeout=2000)
-                if btn and btn.is_visible():
-                    btn.click()
-                    _log(f"[{account_index}] Clicked 'Sign in' button.", log_fh)
-                    clicked = True
-                    break
-            except Exception:
-                continue
-        if not clicked:
-            # Last resort: try navigating to login URL directly
-            _log(f"[{account_index}] Could not find Sign in button. Trying direct navigation...", log_fh)
-            bot._page.goto("https://login.live.com/", wait_until="domcontentloaded")
-            bot._page.wait_for_timeout(2000)
-            _log(f"[{account_index}] Navigated to login.live.com.", log_fh)
+        # Not at login page yet. Try to find sign-in URL from the page DOM.
+        _log(f"[{account_index}] Not on login page. Looking for sign-in link...", log_fh)
+        try:
+            signin_url = bot._page.evaluate('''() => {
+                // Search all links for Microsoft login URLs
+                const links = document.querySelectorAll('a');
+                for (const link of links) {
+                    if (link.href && (
+                        link.href.includes('login.live.com') ||
+                        link.href.includes('login.microsoftonline.com') ||
+                        link.href.includes('aadcdn.msauth.net')
+                    )) return link.href;
+                    // Also check buttons and generic elements with sign-in text
+                    const t = (link.innerText || link.textContent || '').toLowerCase();
+                    if (t.includes('sign in') || t.includes('log in') || t.includes('登录')) {
+                        if (link.href) return link.href;
+                    }
+                }
+                // Also search the entire page for any URL containing login
+                const html = document.documentElement.outerHTML;
+                const m = html.match(/https?:\\/\\/login\\.live\\.com[^"']+/);
+                if (m) return m[0];
+                return null;
+            }''')
+            if signin_url:
+                _log(f"[{account_index}] Found sign-in URL. Navigating...", log_fh)
+                bot._page.goto(signin_url, wait_until="domcontentloaded")
+                bot._page.wait_for_timeout(2000)
+            else:
+                # Direct fallback: navigate to the live login page
+                _log(f"[{account_index}] No sign-in link found. Navigating directly to login...", log_fh)
+                bot._page.goto("https://login.live.com/login.srf", wait_until="domcontentloaded")
+                bot._page.wait_for_timeout(2000)
+        except Exception as e:
+            _log(f"[{account_index}] Navigation error: {e}. Going to login.live.com...", log_fh)
+            bot._page.goto("https://login.live.com/login.srf", wait_until="domcontentloaded")
+            bot._page.wait_for_timeout(3000)
 
     # ====== Auto-fill username ======
     try:
