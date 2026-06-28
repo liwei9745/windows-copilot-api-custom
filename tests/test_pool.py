@@ -27,14 +27,14 @@ class TestAccountPool(unittest.TestCase):
             
             # Check pool loading
             self.assertEqual(len(api._clients), 2)
-            self.assertEqual(api._clients[0], client1)
-            self.assertEqual(api._clients[1], client2)
+            self.assertEqual(api._clients[0]["client"], client1)
+            self.assertEqual(api._clients[1]["client"], client2)
             
             # Check round-robin routing
-            self.assertEqual(api.get_next_client(), client1)
-            self.assertEqual(api.get_next_client(), client2)
-            self.assertEqual(api.get_next_client(), client1)
-            self.assertEqual(api.get_next_client(), client2)
+            self.assertEqual(api.get_next_client()["client"], client1)
+            self.assertEqual(api.get_next_client()["client"], client2)
+            self.assertEqual(api.get_next_client()["client"], client1)
+            self.assertEqual(api.get_next_client()["client"], client2)
 
     def test_single_account_fallback(self):
         # Clear module cache for server.api so it re-initializes with mocked glob
@@ -55,9 +55,9 @@ class TestAccountPool(unittest.TestCase):
             
             # Check default configuration
             self.assertEqual(len(api._clients), 1)
-            self.assertEqual(api._clients[0], client_default)
-            self.assertEqual(api.get_next_client(), client_default)
-            self.assertEqual(api.get_next_client(), client_default)
+            self.assertEqual(api._clients[0]["client"], client_default)
+            self.assertEqual(api.get_next_client()["client"], client_default)
+            self.assertEqual(api.get_next_client()["client"], client_default)
 
 
 if __name__ == "__main__":
