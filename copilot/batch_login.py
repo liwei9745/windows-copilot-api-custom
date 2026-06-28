@@ -48,8 +48,17 @@ def _run_browser_login(profile_dir: str, username: str, password: str, log_fh=No
             page = context.new_page()
 
             # Navigate to Microsoft live login page directly
-            _log("[browser] Navigating to login.live.com/login.srf...", log_fh)
-            page.goto("https://login.live.com/login.srf", wait_until="domcontentloaded", timeout=30000)
+            _log("[browser] Navigating to Microsoft login for Copilot...", log_fh)
+            import urllib.parse
+            oauth_params = {
+                'client_id': '9e5f94bc-e8a4-4e73-b8be-63364c29d753',
+                'response_type': 'code',
+                'redirect_uri': 'https://copilot.microsoft.com/',
+                'scope': 'openid profile email ChatAI.ReadWrite',
+                'response_mode': 'query',
+            }
+            oauth_url = 'https://login.live.com/oauth20_authorize.srf?' + urllib.parse.urlencode(oauth_params)
+            page.goto(oauth_url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(2000)
 
             # Auto-fill username
