@@ -106,6 +106,42 @@ def login_one(
 
     _log(f"[{account_index}] Browser opened. Auto-filling credentials...", log_fh)
 
+    # ====== Step 1: Navigate to login page ======
+    # If we're not already on a login.live.com page, click "Sign in" button first
+    _log(f"[{account_index}] Checking if login page is already showing...", log_fh)
+    try:
+        bot._page.wait_for_selector('input[name="loginfmt"]', timeout=3000)
+        _log(f"[{account_index}] Already on login page.", log_fh)
+    except Exception:
+        # Not at login page yet. Click "Sign in" button first.
+        _log(f"[{account_index}] Not on login page. Looking for 'Sign in' button...", log_fh)
+        signin_selectors = [
+            'a[data-testid="sign-in-link"]',
+            '#mectrl_header_signin',
+            'a:has-text("Sign in")',
+            'a:has-text("登录")',
+            'button:has-text("Sign in")',
+            'a[href*="login.live.com"]',
+            '#idSIButton9',  # sometimes already on login page but AAD-based
+        ]
+        clicked = False
+        for sel in signin_selectors:
+            try:
+                btn = bot._page.wait_for_selector(sel, timeout=2000)
+                if btn and btn.is_visible():
+                    btn.click()
+                    _log(f"[{account_index}] Clicked 'Sign in' button.", log_fh)
+                    clicked = True
+                    break
+            except Exception:
+                continue
+        if not clicked:
+            # Last resort: try navigating to login URL directly
+            _log(f"[{account_index}] Could not find Sign in button. Trying direct navigation...", log_fh)
+            bot._page.goto("https://login.live.com/", wait_until="domcontentloaded")
+            bot._page.wait_for_timeout(2000)
+            _log(f"[{account_index}] Navigated to login.live.com.", log_fh)
+
     # ====== Auto-fill username ======
     try:
         bot._page.wait_for_selector('input[name="loginfmt"]', timeout=30000)
