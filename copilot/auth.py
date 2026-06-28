@@ -51,6 +51,14 @@ def load_auth(
                 return cached
         except (ValueError, OSError):
             pass  # corrupt/unreadable -> refresh below
+    else:
+        # No saved session file at all. Unless auto_login is True (interactive),
+        # fail fast without starting a browser to avoid blocking.
+        if not auto_login:
+            raise RuntimeError(
+                "Not signed in (no access token in the browser profile). "
+                "Run `python -m copilot login` and sign in first."
+            )
 
     from .browser import BrowserCopilot
 

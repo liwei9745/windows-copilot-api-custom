@@ -11,6 +11,7 @@ docs/
 
 # Local config / secrets
 config.json
+accounts.txt
 
 # Logs
 *.log
