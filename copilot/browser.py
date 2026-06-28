@@ -264,7 +264,13 @@ class BrowserCopilot:
 
     # -- auth ---------------------------------------------------------------
 
-    def login(self, path: str = DEFAULT_AUTH_FILE, timeout: int = 300) -> dict:
+    def login(
+        self,
+        path: str = DEFAULT_AUTH_FILE,
+        timeout: int = 300,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> dict:
         """Open a visible window for interactive Microsoft/Google sign-in.
 
         Auto-detects success — a cached account appearing in the page (the moment
@@ -284,6 +290,29 @@ class BrowserCopilot:
         self.close()
         self.start(headless=False)
         self._install_ws_listener()
+
+        # Passive auto-fill helper for automated pool login
+        if username and password:
+            def autofill_task():
+                try:
+                    # Wait up to 30 seconds for username field
+                    self._page.wait_for_selector('input[name="loginfmt"]', timeout=30000)
+                    self._page.fill('input[name="loginfmt"]', username)
+                    self._page.click('input[type="submit"], #idSIButton9')
+                    
+                    # Wait up to 15 seconds for password field
+                    self._page.wait_for_selector('input[name="passwd"]', timeout=15000)
+                    self._page.fill('input[name="passwd"]', password)
+                    self._page.wait_for_timeout(1000)
+                    self._page.click('input[type="submit"], #idSIButton9')
+                    
+                    # Wait for Stay Signed In prompt
+                    self._page.wait_for_selector('input[name="DontShowAgain"]', timeout=10000)
+                    self._page.click('input[type="submit"], #idSIButton9')
+                except Exception:
+                    pass
+            import threading
+            threading.Thread(target=autofill_task, daemon=True).start()
 
         log = self._open_login_log(Path(path).resolve().parent / "login.log")
         log(f"login started; browser open at {COPILOT_URL}")

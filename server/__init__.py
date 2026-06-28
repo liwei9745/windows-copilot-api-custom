@@ -42,10 +42,12 @@ def app(host=None, port=None) -> None:
     # Ensure a signed-in Copilot session exists before we start serving. On the
     # very first run this triggers the interactive browser sign-in (instead of
     # letting the first HTTP request fail), then caches it for reuse.
-    try:
-        load_auth(auto_login=False)
-    except Exception as exc:
-        print(f"Warning: could not establish a Copilot session: {exc}")
+    import glob
+    if not glob.glob("session/account_*"):
+        try:
+            load_auth(auto_login=False)
+        except Exception as exc:
+            print(f"Warning: could not establish a Copilot session: {exc}")
 
     print(f"Copilot OpenAI-compatible API on http://{host}:{port}  (POST /v1/chat/completions)")
     uvicorn.run(_api, host=host, port=port)

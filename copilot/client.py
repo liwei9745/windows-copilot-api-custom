@@ -108,6 +108,7 @@ class CopilotClient:
         max_age: int = AUTH_MAX_AGE,
         interactive_clear: bool = True,
         headless_clear: bool = False,
+        session_dir: str = "session",
     ):
         self._driver = Copilot()
         self._anonymous = anonymous
@@ -115,6 +116,7 @@ class CopilotClient:
         self._max_age = max_age
         self._interactive_clear = interactive_clear
         self._headless_clear = headless_clear
+        self._session_dir = session_dir
         self._auth: Optional[dict] = None
 
     def stream(
@@ -243,5 +245,10 @@ class CopilotClient:
         if self._anonymous:
             return None
         if self._auth is None or (time.time() - self._auth.get("saved_at", 0)) >= self._max_age:
-            self._auth = load_auth(max_age=self._max_age, proxy=self._proxy)
+            self._auth = load_auth(
+                path=f"{self._session_dir}/token.json",
+                profile_dir=f"{self._session_dir}/profile",
+                max_age=self._max_age,
+                proxy=self._proxy,
+            )
         return self._auth

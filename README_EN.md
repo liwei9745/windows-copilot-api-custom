@@ -76,10 +76,17 @@ graph TD
    playwright install chromium
    ```
 4. **First-time Login (Authorization)**:
-   ```bash
-   python -m copilot login
-   ```
-   *A browser window will pop up. Please log into your Microsoft or Google account. The window closes itself automatically once sign-in is complete.*
+   * **Single Account Login**:
+     ```bash
+     python -m copilot login
+     ```
+     *A browser window will pop up. Please log into your Microsoft or Google account. The window closes itself automatically once sign-in is complete.*
+   * **🔥 Batch Login (Multi-Account Pool)**:
+     If you have multiple Microsoft accounts (e.g., a text file `accounts.txt` containing usernames and passwords in format `username----password----extra`), you can place it under the project root and run:
+     ```bash
+     python -m copilot login accounts.txt
+     ```
+     *Playwright will open the browser and passively auto-fill the credentials. If a captcha or two-factor prompt appears, simply solve it manually. The browser will auto-close upon successful sign-in and save credentials to `session/account_1`, `session/account_2`... respectively.*
 5. **Set Proxy & Run**:
    Run the following commands in PowerShell to start the service:
    ```powershell
@@ -88,6 +95,7 @@ graph TD
    $env:ALL_PROXY="socks5://127.0.0.1:10808"
    python app.py
    ```
+   *The service will auto-detect multiple accounts in `session/account_*` subfolders, loading them into a client pool. The FastAPI server will load-balance completions requests using a Round-Robin algorithm, effectively bypassing rate limits and account risk controls!*
 
 ---
 

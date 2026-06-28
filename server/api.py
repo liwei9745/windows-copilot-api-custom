@@ -20,13 +20,29 @@ from .prompt import messages_to_prompt
 from .ratelimit import TokenBucket
 from .schemas import ChatCompletionRequest
 
+import glob
+import itertools
+
 app = FastAPI(title="Copilot OpenAI-compatible API", version="1.0.0")
-# Server runs headless and must never pop a visible browser mid-request. With
-# both recovery passes disabled, an expired clearance surfaces immediately as a
-# 503 (see ClearanceRequired handling below) so an operator can re-clear out of
-# band (`python -m copilot login`). Headless auto-solve is intentionally off:
-# it's unreliable on low-trust egress and a failed pass can wedge the session.
-client = CopilotClient(interactive_clear=False, headless_clear=True)
+
+# Auto-detect multiple account directories under "session" (e.g. session/account_*)
+# If found, build a client pool for round-robin scheduling to bypass rate limits and risk control.
+_account_dirs = sorted(glob.glob("session/account_*"))
+_clients = []
+if _account_dirs:
+    for d in _account_dirs:
+        _clients.append(CopilotClient(interactive_clear=False, headless_clear=True, session_dir=d))
+    print(f"[pool] Loaded {len(_clients)} accounts for round-robin routing.")
+else:
+    _clients.append(CopilotClient(interactive_clear=False, headless_clear=True, session_dir="session"))
+    print("[pool] Running in single-account mode (default 'session' folder).")
+
+_client_pool = itertools.cycle(_clients)
+_pool_lock = threading.Lock()
+
+def get_next_client():
+    with _pool_lock:
+        return next(_client_pool)
 
 _CLEARANCE_HELP = (
     "Cloudflare clearance expired and could not be refreshed headlessly. "
@@ -77,7 +93,8 @@ def _stream(prompt: str, model: str, conversation_id=None):
     try:
         with _upstream_lock:  # one upstream chat at a time (released on disconnect)
             yield sse_event(stream_chunk(cid, created, model, {"role": "assistant"}))
-            stream = client.stream(prompt, conversation_id=conversation_id)
+            active_client = get_next_client()
+            stream = active_client.stream(prompt, conversation_id=conversation_id)
             for piece in stream:
                 if isinstance(piece, str) and piece:
                     yield sse_event(stream_chunk(cid, created, model, {"content": piece}))
@@ -137,7 +154,8 @@ def chat_completions(req: ChatCompletionRequest):
 
     try:
         with _upstream_lock:  # serialize: one upstream chat at a time
-            reply = client.chat(prompt, conversation_id=req.conversation_id)
+            active_client = get_next_client()
+            reply = active_client.chat(prompt, conversation_id=req.conversation_id)
     except ClearanceRequired:
         return JSONResponse(
             status_code=503,
