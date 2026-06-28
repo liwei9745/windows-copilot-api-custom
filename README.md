@@ -105,8 +105,8 @@ You sign in once in a browser with your Microsoft **or Google** account; your se
 
 ```bash
 # 1. Clone the project
-git clone <your-repo-url>
-cd Windows-Copilot-API
+git clone https://github.com/liwei9745/windows-copilot-api-custom.git
+cd windows-copilot-api-custom
 ```
 
 **2. Create and activate a virtual environment**
