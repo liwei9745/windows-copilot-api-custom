@@ -31,10 +31,16 @@ _account_dirs = sorted(glob.glob("session/account_*"))
 _clients = []
 if _account_dirs:
     for d in _account_dirs:
-        _clients.append(CopilotClient(interactive_clear=False, headless_clear=True, session_dir=d))
+        _clients.append({
+            "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir=d),
+            "lock": threading.Lock()
+        })
     print(f"[pool] Loaded {len(_clients)} accounts for round-robin routing.")
 else:
-    _clients.append(CopilotClient(interactive_clear=False, headless_clear=True, session_dir="session"))
+    _clients.append({
+        "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir="session"),
+        "lock": threading.Lock()
+    })
     print("[pool] Running in single-account mode (default 'session' folder).")
 
 _client_pool = itertools.cycle(_clients)
@@ -79,7 +85,7 @@ def _rate_limited_response():
 # single signed-in account, so we serialize upstream calls: concurrent HTTP
 # requests queue here and run one at a time. Predictable, at the cost of
 # parallelism — fine for a personal bridge.
-_upstream_lock = threading.Lock()
+
 
 
 def _stream(prompt: str, model: str, conversation_id=None):
@@ -90,11 +96,11 @@ def _stream(prompt: str, model: str, conversation_id=None):
     """
     cid = new_id()
     created = int(time.time())
+    active_client = get_next_client()
     try:
-        with _upstream_lock:  # one upstream chat at a time (released on disconnect)
+        with active_client["lock"]:  # serialize per account, allowing different accounts to run concurrently
             yield sse_event(stream_chunk(cid, created, model, {"role": "assistant"}))
-            active_client = get_next_client()
-            stream = active_client.stream(prompt, conversation_id=conversation_id)
+            stream = active_client["client"].stream(prompt, conversation_id=conversation_id)
             for piece in stream:
                 if isinstance(piece, str) and piece:
                     yield sse_event(stream_chunk(cid, created, model, {"content": piece}))
@@ -152,10 +158,10 @@ def chat_completions(req: ChatCompletionRequest):
             _stream(prompt, model, req.conversation_id), media_type="text/event-stream"
         )
 
+    active_client = get_next_client()
     try:
-        with _upstream_lock:  # serialize: one upstream chat at a time
-            active_client = get_next_client()
-            reply = active_client.chat(prompt, conversation_id=req.conversation_id)
+        with active_client["lock"]:  # serialize per account, allowing different accounts to run concurrently
+            reply = active_client["client"].chat(prompt, conversation_id=req.conversation_id)
     except ClearanceRequired:
         return JSONResponse(
             status_code=503,

@@ -15,7 +15,7 @@ class ServerStartupTests(unittest.TestCase):
             app()
 
         self.assertEqual(run.call_args.kwargs["host"], "127.0.0.1")
-        self.assertEqual(run.call_args.kwargs["port"], 8000)
+        self.assertEqual(run.call_args.kwargs["port"], 18521)
 
     @patch("uvicorn.run")
     @patch("copilot.auth.load_auth")
