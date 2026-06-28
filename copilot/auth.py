@@ -23,7 +23,7 @@ def load_auth(
     profile_dir: str = DEFAULT_PROFILE_DIR,
     max_age: int = AUTH_MAX_AGE,
     proxy: Optional[str] = None,
-    auto_login: bool = True,
+    auto_login: bool = False,
 ) -> dict:
     """Return ``{cookies, access_token, saved_at}`` for the signed-in user.
 

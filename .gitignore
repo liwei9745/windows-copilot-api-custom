@@ -12,6 +12,10 @@ docs/
 # Local config / secrets
 config.json
 
+# Logs
+*.log
+*.err
+
 # Dev files
 test.py
 main.py

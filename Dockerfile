@@ -13,8 +13,8 @@ COPY . .
 
 # Serve on all interfaces inside the container; map the port in compose.
 ENV HOST=0.0.0.0 \
-    PORT=8000
+    PORT=18521
 
-EXPOSE 8000
+EXPOSE 18521
 
 CMD ["python", "app.py"]

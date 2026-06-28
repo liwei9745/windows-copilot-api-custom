@@ -3,11 +3,11 @@ services:
     build: .
     image: windows-copilot-api
     ports:
-      - "8000:8000"
+      - "18521:18521"
     environment:
       # Bind inside the container; the host port is set under `ports` above.
       HOST: "0.0.0.0"
-      PORT: "8000"
+      PORT: "18521"
       # Self-imposed rate limit (see server/config.py). Tune to your account.
       RATE_LIMIT_RPM: "12"
       RATE_LIMIT_BURST: "4"

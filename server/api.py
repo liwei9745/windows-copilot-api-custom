@@ -26,7 +26,7 @@ app = FastAPI(title="Copilot OpenAI-compatible API", version="1.0.0")
 # 503 (see ClearanceRequired handling below) so an operator can re-clear out of
 # band (`python -m copilot login`). Headless auto-solve is intentionally off:
 # it's unreliable on low-trust egress and a failed pass can wedge the session.
-client = CopilotClient(interactive_clear=False, headless_clear=False)
+client = CopilotClient(interactive_clear=False, headless_clear=True)
 
 _CLEARANCE_HELP = (
     "Cloudflare clearance expired and could not be refreshed headlessly. "
@@ -81,6 +81,9 @@ def _stream(prompt: str, model: str, conversation_id=None):
             for piece in stream:
                 if isinstance(piece, str) and piece:
                     yield sse_event(stream_chunk(cid, created, model, {"content": piece}))
+                elif hasattr(piece, "url"):  # ImageResponse
+                    img_md = f"\n![{getattr(piece, 'prompt', 'image')}]({piece.url})\n"
+                    yield sse_event(stream_chunk(cid, created, model, {"content": img_md}))
             # Copilot's conversation id is known once the stream has run; emit it
             # on the final chunk so callers can track the upstream thread.
             yield sse_event(
@@ -118,7 +121,8 @@ def chat_completions(req: ChatCompletionRequest):
             status_code=400,
             content={"error": {"message": "no text content in messages", "type": "invalid_request_error"}},
         )
-    model = req.model or MODEL_NAME
+    # Regardless of the model passed by client, force rewrite to the internal MODEL_NAME ("copilot")
+    model = MODEL_NAME
 
     # Enforce the per-minute ceiling before touching the upstream lock, so excess
     # callers get a fast 429 instead of piling up behind the serialized queue.
@@ -144,7 +148,11 @@ def chat_completions(req: ChatCompletionRequest):
             status_code=502,
             content={"error": {"message": str(exc), "type": "upstream_error"}},
         )
-    return completion_response(reply.text, model, reply.conversation_id)
+    text = reply.text
+    if getattr(reply, "images", None):
+        image_mds = [f"\n![{img.prompt}]({img.url})" for img in reply.images]
+        text += "\n" + "\n".join(image_mds)
+    return completion_response(text, model, reply.conversation_id)
 
 
 @app.get("/")
