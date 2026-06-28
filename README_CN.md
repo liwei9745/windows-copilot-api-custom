@@ -1,12 +1,42 @@
 # Windows Copilot API (二创版)
 
-> 本项目基于原版 [Windows-Copilot-API](https://github.com/vladkens/windows-copilot-api) 项目进行二次开发。在此特别感谢原作者的无私开源和杰出贡献！
+🇺🇸 **[English Documentation](README.md)**
 
-## 二创优化特性
+> 💡 本项目基于原作者 **vladkens** 的优秀开源项目 [Windows-Copilot-API](https://github.com/vladkens/windows-copilot-api) 进行二次开发。在此特别感谢原作者的无私开源和杰出贡献！
+
+---
+
+## 🚀 核心优化特性
 1. **非常规端口**：默认服务端口修改为 `18521`，降低端口冲突，提升私有化部署的隐蔽性与安全性。
-2. **免死锁防卡死**：修改了认证刷新机制。若缺少凭证或失效，服务不会在后台无限期卡死有头浏览器，而是立刻向客户端反馈，方便多机及无人值守部署。
-3. **模型名称欺骗（强制重写）**：在 FastAPI 接口层实现隐式拦截重写。不论您在客户端（如 NextChat）里传入什么模型名称（如 `gpt-4`、`codex` 或自定义模型），后端一律在通信中隐式重写为实际生效的模型，实现模型兼容欺骗。
-4. **原生生图渲染**：完美适配了 DALL-E 3 生成的图片。生图（无论是普通调用还是流式调用）都将以标准 Markdown 格式 `![描述](图片链接)` 直接追加在文本末尾，让任何常规 API 客户端都可以直接显示生成的猫咪/画作。
+2. **免死锁防卡死**：修改了认证刷新机制。若缺少凭证或失效，服务不会在后台无限制卡死有头浏览器，而是立刻向客户端反馈。
+3. **模型名称欺骗（强制重写）**：在 FastAPI 接口层实现隐式拦截重写。不论您在客户端（如 NextChat）里传入什么模型名称（如 `gpt-4`、`codex` 或自定义模型），后端一律在通信中隐式重写为实际生效的 `copilot` 模型。
+4. **原生生图渲染**：完美适配了 DALL-E 3 生成的图片。生图（无论是普通调用还是流式调用）都将以标准 Markdown 格式 `![描述](图片链接)` 直接追加在文本末尾，让任何常规 API 客户端都可以直接显示生成的图片。
+
+---
+
+## 📊 项目架构图
+
+```mermaid
+graph TD
+    Client[客户端 / OpenAI Client] -->|1. POST /v1/chat/completions| API[FastAPI Server :18521]
+    API -->|2. Intercept & Rewrite Model to 'copilot'| API
+    API -->|3. load_auth| Auth{Token Valid?}
+    Auth -->|Yes| ClientLib[copilot.client]
+    Auth -->|No| Headless[Playwright Headless]
+    Headless -->|Acquire token & clearance| ClientLib
+    ClientLib -->|4. curl_cffi via Proxy 10808| Copilot[Microsoft Copilot Web API]
+    Copilot -->|5. Returns Response| ClientLib
+    ClientLib -->|6. Yields Text & Image| API
+    API -->|7. Append DALL-E 3 MD & Return| Client
+```
+
+---
+
+## 📢 交流与推广
+
+* **QQ 交流群**：`1005859624` （注：我不是群主）。欢迎加入交流讨论！
+* **诚邀关注与星标**：
+  诚邀大家关注并支持另一个优秀开源项目 **[chatgpt2api](https://github.com/yukkcat/chatgpt2api)**，恳请大家前往给作者点亮一个 **Star** 和 **Fork** 🌟！
 
 ---
 

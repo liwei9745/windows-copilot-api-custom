@@ -1,5 +1,52 @@
 
 
+# Windows Copilot API (Custom二创版)
+
+🇨🇳 **[中文文档 | Chinese Documentation](README_CN.md)**
+
+> 💡 This project is a customized secondary creation based on the excellent original work [Windows-Copilot-API](https://github.com/vladkens/windows-copilot-api) by **vladkens**. 
+> Huge thanks to the original author for their outstanding contribution and selfless open-sourcing!
+>
+> 本项目基于原作者 **vladkens** 的优秀开源项目 [Windows-Copilot-API](https://github.com/vladkens/windows-copilot-api) 进行二次开发。在此特向原作者的杰出贡献表达最诚挚的感谢！
+
+---
+
+## 🚀 Key Optimizations / 核心优化特性
+
+1. **Non-standard Port / 非常规端口**: Default port has been changed to `18521` (modified from `8000`), reducing conflicts and enhancing privacy.
+2. **Anti-Deadlock Mechanism / 免卡死防死锁**: Modified the token refresh routine. If credentials are missing, the background server fails fast and responds to clients instead of hanging in headless Chromium loops.
+3. **Model Name Spoofing / 模型伪装欺骗**: Added request interception logic in FastAPI. Regardless of the client's request model (e.g. `gpt-4`, `codex`), it will be rewritten to `"copilot"` implicitly.
+4. **Native Image Output / 原生生图支持**: Native support for DALL-E 3 image results (whether streaming or normal API replies). Images are appended as standard Markdown `![prompt](url)` so standard clients (e.g., NextChat) render them automatically.
+
+---
+
+## 📊 Architecture Diagram / 项目架构图
+
+```mermaid
+graph TD
+    Client[客户端 / OpenAI Client] -->|1. POST /v1/chat/completions| API[FastAPI Server :18521]
+    API -->|2. Intercept & Rewrite Model to 'copilot'| API
+    API -->|3. load_auth| Auth{Token Valid?}
+    Auth -->|Yes| ClientLib[copilot.client]
+    Auth -->|No| Headless[Playwright Headless]
+    Headless -->|Acquire token & clearance| ClientLib
+    ClientLib -->|4. curl_cffi via Proxy 10808| Copilot[Microsoft Copilot Web API]
+    Copilot -->|5. Returns Response| ClientLib
+    ClientLib -->|6. Yields Text & Image| API
+    API -->|7. Append DALL-E 3 MD & Return| Client
+```
+
+---
+
+## 📢 Collaboration & Community / 交流与推广
+
+* **QQ Group / QQ交流群**: `1005859624` (Note: I am not the owner of this group / 注：我不是群主). Welcome to join for discussions!
+* **Star Recommendation / 诚邀关注与星标**:
+  Please check out and support **[chatgpt2api](https://github.com/yukkcat/chatgpt2api)**, another excellent project. Go give it a **Star** and **Fork**!
+  诚邀大家关注并支持优秀项目 **[chatgpt2api](https://github.com/yukkcat/chatgpt2api)**，支持原作者点亮 Star 🌟！
+
+---
+
 # Windows Copilot API: a free LLM API powered by Microsoft Copilot
 
 ![Windows Copilot API — a free, OpenAI-compatible API for your Microsoft Copilot account](assets/windows-copilot-api-banner.png)
