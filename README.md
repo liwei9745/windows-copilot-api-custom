@@ -1,432 +1,145 @@
+# 🚀 Windows Copilot API (二创优化版)
 
+<p align="center">
+  <a href="https://github.com/liwei9745/windows-copilot-api-custom/stargazers"><img src="https://img.shields.io/github/stars/liwei9745/windows-copilot-api-custom?style=flat-square&color=ffd700" alt="GitHub stars"></a>
+  <a href="https://github.com/liwei9745/windows-copilot-api-custom/network/members"><img src="https://img.shields.io/github/forks/liwei9745/windows-copilot-api-custom?style=flat-square&color=00ff00" alt="GitHub forks"></a>
+  <a href="https://github.com/liwei9745/windows-copilot-api-custom/blob/master/LICENSE"><img src="https://img.shields.io/github/license/liwei9745/windows-copilot-api-custom?style=flat-square" alt="GitHub license"></a>
+</p>
 
-# Windows Copilot API (Custom二创版)
+🇺🇸 **[English Documentation](README_EN.md)**
 
-🇨🇳 **[中文文档 | Chinese Documentation](README_CN.md)**
-
-> 💡 This project is a customized secondary creation based on the excellent original work [Windows-Copilot-API](https://github.com/vladkens/windows-copilot-api) by **vladkens**. 
-> Huge thanks to the original author for their outstanding contribution and selfless open-sourcing!
->
+> 💡 **二创致谢与说明**：
 > 本项目基于原作者 **vladkens** 的优秀开源项目 [Windows-Copilot-API](https://github.com/vladkens/windows-copilot-api) 进行二次开发。在此特向原作者的杰出贡献表达最诚挚的感谢！
 
 ---
 
-## 🚀 Key Optimizations / 核心优化特性
+## 🎯 项目目标与已实现功能
 
-1. **Non-standard Port / 非常规端口**: Default port has been changed to `18521` (modified from `8000`), reducing conflicts and enhancing privacy.
-2. **Anti-Deadlock Mechanism / 免卡死防死锁**: Modified the token refresh routine. If credentials are missing, the background server fails fast and responds to clients instead of hanging in headless Chromium loops.
-3. **Model Name Spoofing / 模型伪装欺骗**: Added request interception logic in FastAPI. Regardless of the client's request model (e.g. `gpt-4`, `codex`), it will be rewritten to `"copilot"` implicitly.
-4. **Native Image Output / 原生生图支持**: Native support for DALL-E 3 image results (whether streaming or normal API replies). Images are appended as standard Markdown `![prompt](url)` so standard clients (e.g., NextChat) render them automatically.
+### 📌 项目目标
+将您的普通 **Microsoft Copilot 个人账号** 转化为高可用、零成本、零门槛的 **OpenAI 兼容接口 (Chat Completions API)**。无需购买付费 API Key，即可在任何第三方客户端（例如 NextChat, LobeChat, One-API 等）里无缝调用 Copilot 背后的底层大模型进行交谈和生图。
+
+### ✨ 已实现功能
+* **【非常规端口】**：默认端口优化修改为 `18521`，有效避免 `8000` 等常规端口占用冲突。
+* **【模型名称欺骗（强制重写）】**：FastAPI 路由层自动进行隐式重写。无论您在前端客户端传入什么模型名称（如 `gpt-4o`、`codex`、`any-model`），后端都会强行且安全地重写为实际生效的 `copilot` 模型处理，解决客户端固化模型配置的问题。
+* **【免卡死防死锁机制】**：优化了认证逻辑。当遇到账户未登录或 Cookie 过期等异常时，后台不会无限期卡住无头（Headless）浏览器导致 API 请求一直超时，而是会立即快速返回 502/503 报错，提供直观的终端授权提示。
+* **【原生生图（DALL-E 3）渲染】**：当检测到绘图请求（如“画一只猫”）时，服务会自动提取生成的图片 URL，以标准的 Markdown 格式 `![描述](图片链接)` 直接追加在文本末尾，使得任何标准的 GPT 前端客户端均能直接在聊天框内自动渲染出图片！
+* **【多平台适配与无头自动刷新】**：只需在有屏幕的环境首次扫码/登录一次，产生的 `session` 即可随处复用，后台将全自动在无头模式下模拟点击 Cloudflare 人机验证挑战并静默更新 Token。
 
 ---
 
-## 📊 Architecture Diagram / 项目架构图
+## 📊 系统架构图
 
 ```mermaid
 graph TD
-    Client[客户端 / OpenAI Client] -->|1. POST /v1/chat/completions| API[FastAPI Server :18521]
-    API -->|2. Intercept & Rewrite Model to 'copilot'| API
-    API -->|3. load_auth| Auth{Token Valid?}
-    Auth -->|Yes| ClientLib[copilot.client]
-    Auth -->|No| Headless[Playwright Headless]
-    Headless -->|Acquire token & clearance| ClientLib
-    ClientLib -->|4. curl_cffi via Proxy 10808| Copilot[Microsoft Copilot Web API]
-    Copilot -->|5. Returns Response| ClientLib
-    ClientLib -->|6. Yields Text & Image| API
-    API -->|7. Append DALL-E 3 MD & Return| Client
+    Client[第三方客户端 NextChat / LobeChat] -->|1. 发送标准 completions 请求| API[二创 API 服务端口 18521]
+    API -->|2. 隐式重写模型名为 copilot| API
+    API -->|3. 加载登录凭证| Auth{凭证是否存在且有效?}
+    Auth -->|是| ClientLib[copilot.client 驱动]
+    Auth -->|否| Headless[Playwright 无头浏览器挑战/刷新]
+    Headless -->|自动获取 cf_clearance 与 Token| ClientLib
+    ClientLib -->|4. curl_cffi 挂载用户本地代理 10808| Copilot[微软 Copilot Web 接口]
+    Copilot -->|5. 返回流式/非流式响应| ClientLib
+    ClientLib -->|6. 提取生成的 DALL-E 3 图像 URL| API
+    API -->|7. 转化为 Markdown 图像标签附加并返回| Client
 ```
 
 ---
 
-## 📢 Collaboration & Community / 交流与推广
+## 📢 交流与推广
 
-* **QQ Group / QQ交流群**: `1005859624` (Note: I am not the owner of this group / 注：我不是群主). Welcome to join for discussions!
-* **Star Recommendation / 诚邀关注与星标**:
-  Please check out and support **[chatgpt2api](https://github.com/yukkcat/chatgpt2api)**, another excellent project. Go give it a **Star** and **Fork**!
-  诚邀大家关注并支持优秀项目 **[chatgpt2api](https://github.com/yukkcat/chatgpt2api)**，支持原作者点亮 Star 🌟！
-
----
-
-# Windows Copilot API: a free LLM API powered by Microsoft Copilot
-
-![Windows Copilot API — a free, OpenAI-compatible API for your Microsoft Copilot account](assets/windows-copilot-api-banner.png)
-
-**Using your own Microsoft Copilot account.** No API key, no credits, no paid plan: it turns the free chat at [copilot.microsoft.com](https://copilot.microsoft.com) into an API you can call from code.
-
-You can use it in two ways:
-
-- 🐍 **As a Python library:** just call `client.chat("Hi")`. Supports streaming and multi-turn conversations.
-- 🔌 **As a local OpenAI-compatible API:** runs a server at `http://localhost:8000/v1` that speaks the OpenAI format, so the official `openai` SDK (and any OpenAI-compatible app) works as a drop-in, with `localhost` in place of OpenAI.
-
-You sign in once in a browser with your Microsoft **or Google** account; your session is saved and refreshed automatically after that.
-
-> **Unofficial project.** Not affiliated with or endorsed by Microsoft. It automates the consumer Copilot web experience for personal use, so use it responsibly and within Microsoft's terms.
+* **QQ 交流群**：`1005859624` （注：我不是群主）。欢迎加入交流讨论！
+* **诚邀关注与星标**：
+  诚邀大家关注并支持另一个优秀开源项目 **[chatgpt2api](https://github.com/yukkcat/chatgpt2api)**，恳请大家前往给作者点亮一个 **Star** 和 **Fork** 🌟！
 
 ---
 
-## Table of contents
+## 🛠️ 项目部署与运行指南
 
-- [Why use this?](#why-use-this)
-- [Requirements](#requirements)
-- [Setup (2 minutes)](#setup-2-minutes)
-- [Run with Docker (optional)](#run-with-docker-optional)
-- [Usage 1: In Python (no server)](#usage-1-in-python-no-server)
-- [Usage 2: As an OpenAI-compatible server](#usage-2-as-an-openai-compatible-server)
-- [Command line](#command-line)
-- [Concurrency & stress test](#concurrency--stress-test)
-- [Rate limiting](#rate-limiting)
-- [Project layout](#project-layout)
-- [Notes & limitations](#notes--limitations)
-- [Troubleshooting](#troubleshooting)
-- [Collaboration & support](#collaboration--support)
-- [License](#license)
-- [Star History](#star-history)
+> ⚠️ **运行前提**：本项目的核心是与微软 Copilot 接口通信。国内用户部署前，必须确保代理工具开启，并已知晓本地代理端口（例如 Clash 默认的 `http://127.0.0.1:7890` 或 `http://127.0.0.1:10808`）。以下步骤以本地代理端口为 `10808` 为例。
 
----
+### 方式一：Windows 本地部署
 
-## Why use this?
-
-- **Free:** uses your normal signed-in Copilot, no API billing.
-- **Drop-in OpenAI replacement:** point any OpenAI client at `localhost` and it just works.
-- **Works everywhere you're signed in:** the signed-in path works even in regions where *anonymous* Copilot is blocked (e.g. India).
-- **Streaming + conversations:** token-by-token output and multi-turn threads addressed by `conversation_id`.
-
----
-
-## Requirements
-
-- **Python 3.9+**
-- A **Microsoft account** (the free one you use for Copilot is fine)
-- Works on Windows, macOS, and Linux
-
----
-
-## Setup (2 minutes)
-
-```bash
-# 1. Clone the project
-git clone https://github.com/liwei9745/windows-copilot-api-custom.git
-cd windows-copilot-api-custom
-```
-
-**2. Create and activate a virtual environment**
-
-On **macOS / Linux**:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
-
-On **Windows** (PowerShell):
-
-```powershell
-python -m venv venv
-venv\Scripts\Activate.ps1
-```
-
-> On Windows you may need to allow script execution once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. In `cmd.exe` activate with `venv\Scripts\activate.bat` instead.
-
-**3. Install dependencies and sign in**
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Install the browser Playwright needs (one-time)
-playwright install chromium
-
-# Sign in once: a browser opens, log into your Microsoft or Google account
-python -m copilot login
-```
-
-The browser **closes by itself** once sign-in is detected — you don't need to press Enter or close it manually. After sign-in it sends one short warm-up message that mints the chat token **and** passes Cloudflare's "verify you're human" check in the same step (a brief "finishing setup…" appears, and a tiny throwaway chat lands in your history). If a checkbox shows up, click it in that login window. The steps are logged to `session/login.log` if anything goes wrong. That's it: your session is saved under `session/` (git-ignored, never shared) and reused on every run — so your first request works right away.
-
-> 🛠️ **Run into trouble during setup or your first run?** Head to the [Troubleshooting](#troubleshooting) section, the bundled diagnostic both *fixes* common issues (captcha/clearance) and *logs* a shareable report.
+1. **拉取项目代码**：
+   ```bash
+   git clone https://github.com/liwei9745/windows-copilot-api-custom.git
+   cd windows-copilot-api-custom
+   ```
+2. **创建并激活 Python 虚拟环境**：
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+3. **安装依赖与浏览器**：
+   ```bash
+   pip install -r requirements.txt
+   playwright install chromium
+   ```
+4. **进行首次账号授权登录**：
+   ```bash
+   python -m copilot login
+   ```
+   *此时会弹出一个浏览器窗口。请输入您的 Microsoft 或 Google 账号，登录成功后，浏览器会自动关闭，无需其他操作。*
+5. **设置代理并运行服务**：
+   在 PowerShell 中运行以下命令启动服务：
+   ```powershell
+   $env:HTTP_PROXY="http://127.0.0.1:10808"
+   $env:HTTPS_PROXY="http://127.0.0.1:10808"
+   $env:ALL_PROXY="socks5://127.0.0.1:10808"
+   python app.py
+   ```
 
 ---
 
-## Run with Docker (optional)
+### 方式二：Linux 服务器部署
 
-Prefer a container? You can run the OpenAI-compatible server in Docker once you've signed in.
+由于 Linux 服务器通常没有图形界面，我们使用 **Session 凭证同步机制** 完成部署：
 
-> **Sign in on the host first.** The login step above opens a *visible* browser, which can't run inside the headless container — so run `python -m copilot login` on your host to populate `session/`. The container mounts that folder and reuses the Cloudflare clearance earned on the host. It refreshes the chat token headlessly, but it can't earn *fresh* clearance without a visible browser, so when clearance expires (~30 min) it returns a `503` — re-run `python -m copilot login` on the host to refresh `session/`.
-
-```bash
-docker compose up --build
-# -> Copilot OpenAI-compatible API on http://localhost:8000
-```
-
-The [docker-compose.yml](docker-compose.yml) maps port `8000` and bind-mounts your `session/` so the login persists across restarts. Tune `RATE_LIMIT_RPM` / `RATE_LIMIT_BURST` there. To run without Compose, build and pass the same bindings by hand:
-
-```bash
-docker build -t windows-copilot-api .
-docker run --rm -p 8000:8000 -v "$(pwd)/session:/app/session" windows-copilot-api
-```
-
----
-
-## Usage 1: In Python (no server)
-
-The simplest way if your code is already Python.
-
-```python
-from copilot import CopilotClient
-
-client = CopilotClient()                 # loads your signed-in session
-
-# Get a full reply
-reply = client.chat("Say hello in one short sentence.")
-print(reply.text)
-
-# Continue the SAME conversation — pass the id back
-reply2 = client.chat("And now in French?", reply.conversation_id)
-print(reply2.text)
-
-# Stream the answer as it's typed
-for chunk in client.stream("Tell me a short joke"):
-    print(chunk, end="", flush=True)
-```
-
-`chat()` returns the full text plus a `conversation_id`; pass that id back to keep the thread going, or omit it to start fresh. `stream()` yields the reply piece by piece.
-
-👉 More: [examples/01_direct_chat.py](examples/01_direct_chat.py), [02_direct_conversation.py](examples/02_direct_conversation.py), [03_direct_stream.py](examples/03_direct_stream.py)
+1. **凭证生成**：在本地有屏幕的电脑上完成上述 **方式一** 的第 `4` 步，生成 `session` 凭证。
+2. **拉取代码与安装**：
+   在 Linux 服务器上执行：
+   ```bash
+   git clone https://github.com/liwei9745/windows-copilot-api-custom.git
+   cd windows-copilot-api-custom
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   playwright install chromium
+   ```
+3. **同步 Session**：将刚才在本地生成的 `session` 文件夹整体复制到 Linux 服务器的项目根目录下。
+4. **配置代理并启动**：
+   ```bash
+   export HTTP_PROXY="http://127.0.0.1:10808"
+   export HTTPS_PROXY="http://127.0.0.1:10808"
+   export ALL_PROXY="socks5://127.0.0.1:10808"
+   python app.py
+   ```
 
 ---
 
-## Usage 2: As an OpenAI-compatible server
+### 方式三：Docker 容器化部署
 
-Start a local server that speaks the OpenAI API, so existing OpenAI tools and SDKs work unchanged.
-
-```bash
-python app.py
-# -> Copilot OpenAI-compatible API on http://127.0.0.1:8000
-```
-
-Then point any OpenAI client at it (the API key is required by the SDK but ignored):
-
-```python
-from openai import OpenAI
-
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
-
-resp = client.chat.completions.create(
-    model="copilot",
-    messages=[{"role": "user", "content": "Hello!"}],
-)
-print(resp.choices[0].message.content)
-```
-
-Or call it with plain HTTP / `curl`:
-
-```bash
-curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"messages": [{"role": "user", "content": "Hello!"}]}'
-```
-
-**Endpoints**
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `POST` | `/v1/chat/completions` | Chat (supports `"stream": true` and an optional `"conversation_id"`) |
-| `GET`  | `/v1/models` | Lists the single `copilot` model |
-
-> Change the address with env vars: `HOST=0.0.0.0 PORT=8080 python app.py`, or run `uvicorn server.api:app --host 0.0.0.0 --port 8080`.
-
-👉 More: [examples/04_server_http.py](examples/04_server_http.py), [05_server_stream.py](examples/05_server_stream.py), [06_server_openai_sdk.py](examples/06_server_openai_sdk.py)
+1. **同步凭证**：创建项目根目录下的 `session` 文件夹，确保其中已包含通过前述登录步骤生成的凭据。
+2. **修改 Compose 代理**（根据需要）：若 Docker 容器需共享宿主机代理，请修改 `docker-compose.yml` 中的环境变量：
+   ```yaml
+   environment:
+     HTTP_PROXY: "http://host.docker.internal:10808"
+     HTTPS_PROXY: "http://host.docker.internal:10808"
+   ```
+3. **构建并运行**：
+   ```bash
+   docker-compose up -d --build
+   ```
 
 ---
 
-## Command line
+## 🔌 客户端配置说明
 
-```bash
-python -m copilot login          # sign in and save the session
-python -m copilot ask "Hello!"   # quick one-shot question
-```
+请在您的任意 GPT 客户端（如 NextChat / LobeChat 等）或集成接口（如 One-API）中使用以下配置：
 
----
+| 配置项 | 配置值 |
+| :--- | :--- |
+| **API 端点 (Base URL)** | `http://127.0.0.1:18521/v1` |
+| **API 密钥 (API Key)** | 任意虚拟值（如 `sk-virtual-key`） |
+| **默认/自定义模型 (Model)** | 任意填写（如 `gpt-4o` 或 `codex` 等，后端会全自动拦截并隐式伪装重写，实现正常通信与生图功能） |
 
-## Cloudflare clearance (automatic)
-
-Copilot's chat sits behind Cloudflare. Access needs a `cf_clearance` cookie,
-earned by passing a "verify you're human" check in a real browser, and it lasts
-about half an hour. The bridge handles this for you:
-
-- **At sign-in:** `python -m copilot login` earns clearance as part of the same
-  warm-up that mints your token, so your first request works immediately. If
-  Cloudflare shows a checkbox, click it in the login window.
-- **When it expires:** if a later request hits the gate, the bridge opens a
-  browser, passes the check (the checkbox is clicked automatically, or you click
-  it if one appears), and retries the request for you. You'll see a short
-  `[copilot] clearance: …` progress log, then the answer.
-
-On a trusted connection the check often passes invisibly with no window at all. A
-datacenter/VPN IP is stricter and more likely to show the checkbox; a residential
-connection clears most reliably.
-
-The **server** never opens a window: when clearance expires it returns a `503`
-(`type: "clearance_required"`). Re-clear out of band with `python -m copilot
-login`, then retry.
-
----
-
-## Concurrency & stress test
-
-The server bridges a **single** signed-in Copilot account, and Copilot's chat
-socket doesn't tolerate concurrent conversations from one process. So the server
-**serializes** upstream calls: parallel HTTP requests queue behind a lock and run
-one at a time (see [server/api.py](server/api.py)). This is intentional, and it
-means throughput is sequential, not parallel.
-
-You can measure where it breaks with the included stress test, which fires a
-batch of simultaneous requests and **doubles the batch size every successful
-round** until the first error:
-
-```bash
-# Start the server in one terminal
-python app.py
-
-# Ramp concurrency in another (1 → 2 → 4 → 8 → …)
-python tests/stress.py
-python tests/stress.py --max 64 --timeout 120 --url http://localhost:8000
-```
-
-**Sample run** (one signed-in account):
-
-| Concurrency | Result | Wall time | Latency (min / median / max) |
-| --- | --- | --- | --- |
-| 1 | ✓ all ok | 3.7s | 3.7 / 3.7 / 3.7s |
-| 2 | ✓ all ok | 4.6s | 3.4 / 4.6 / 4.6s |
-| 4 | ✓ all ok | 8.3s | 3.7 / 6.7 / 8.3s |
-| 8 | ✗ 1 failed (`HTTP 502`) | 13.3s | 3.5 / 9.7 / 13.3s |
-
-**Highest fully-successful concurrency: 4.** Wall time roughly doubles each round
-while *minimum* latency stays flat (~3.5s) — the signature of a serialized queue:
-one request runs immediately, the rest wait their turn. The failure at 8 is an
-upstream `502` (Copilot rejecting requests under load), not a server crash or
-timeout — so the exact break point is flaky and may vary between runs.
-
-> Takeaway: keep concurrent in-flight requests low (≈ 1–4). This is a personal
-> bridge, not a high-throughput gateway — and please don't hammer your account.
-
----
-
-## Rate limiting
-
-Concurrency (above) is *how many at once*; the **rate limit** is *how many per
-minute, sustained*. Microsoft publishes none for consumer Copilot, so the bridge
-enforces a self-imposed one with a [token bucket](server/ratelimit.py): it caps
-accepted requests per minute and returns a standard `429` + `Retry-After` when
-you exceed it. Two env vars tune it:
-
-| Env var | Default | Meaning |
-| --- | --- | --- |
-| `RATE_LIMIT_RPM` | `12` | Requests/minute the bridge accepts. `0` disables the limit. |
-| `RATE_LIMIT_BURST` | `4` | How many requests may go back-to-back before pacing kicks in. |
-
-```bash
-RATE_LIMIT_RPM=20 RATE_LIMIT_BURST=5 python app.py   # raise it; 0 to disable
-```
-
-The default 12 rpm sits safely below the ~15 rpm where a single account starts
-seeing upstream `502`s. To find *your* ceiling, run the server with the limiter
-off (`RATE_LIMIT_RPM=0`) and push the probe until failures appear:
-
-```bash
-python tests/ratelimit.py --rpm 20 --minutes 3
-```
-
-**On the client side, use exponential backoff.** Both `429` (bridge limit) and
-the occasional `502` (Copilot upstream hiccup) are transient — retry with
-growing delays (e.g. 1s, 2s, 4s) and they almost always clear. The official
-`openai` SDK does this automatically and honours `Retry-After`; with plain HTTP,
-add a few retries yourself.
-
----
-
-## Project layout
-
-| Path | What it does |
-| --- | --- |
-| [copilot/](copilot/) | The core library: `CopilotClient`, auth, browser sign-in, HTTP driver |
-| [server/](server/) | The FastAPI OpenAI-compatible server |
-| [examples/](examples/) | Runnable examples for every feature ([examples/README.md](examples/README.md)) |
-| [tests/](tests/) | Test scripts: the concurrency stress test ([tests/stress.py](tests/stress.py)) and the diagnostic & report tool ([tests/diagnostic.py](tests/diagnostic.py)) |
-| [app.py](app.py) | Starts the server |
-
----
-
-## Notes & limitations
-
-- **Sign in once, then reuse.** The cached token refreshes automatically; you only re-sign-in if the session fully expires.
-- **No daily limit, but be reasonable.** Microsoft doesn't impose a daily chat cap, but please use it in moderation, and don't spam or hammer it with automated bulk requests.
-- **One model.** Copilot has no model picker, so the server advertises a single model named `copilot`.
-- **Roughly GPT-4 class.** On GPQA Diamond (198 graduate-level questions, closed-book) it scores **40.9%**, which puts it in the GPT-4 family rather than the reasoning tier (o1/o3). Measured with [tests/gpqa_bench.py](tests/gpqa_bench.py).
-- **Your session is private.** Everything in `session/` (cookies + token) stays on your machine and is git-ignored.
-
----
-
-## Troubleshooting
-
-Cloudflare clearance is handled automatically (see above), so most "verify you're
-human" issues clear themselves. If a request still fails, run the diagnostic — it
-refreshes the session and writes a shareable report.
-
-```bash
-python tests/diagnostic.py                # browser capture + report
-python tests/diagnostic.py --report-only  # headless/VPS: report only, no browser
-```
-
-The default run opens your signed-in browser and asks you to send one short
-message. That single action:
-
-- **Refreshes clearance:** it drives a *real* browser on the same
-  `session/profile/` the bridge uses, so passing any "verify you're human" check
-  earns a fresh `cf_clearance` cookie, then snapshots the session (cookies +
-  token) into `session/token.json` for the pure-HTTP driver to adopt.
-- **Captures the protocol** to `session/ws_capture.log`. A clean turn goes
-  `setOptions` → `send` → `appendText…` → `done`; a `{"event":"challenge",
-  "method":"cloudflare",…}` frame means Cloudflare gated the turn.
-
-It also writes `session/diagnostic_report.txt` — environment, the *shape* of your
-session (cookie names + token length, never the values), a live chat probe, and
-redacted log tails. **Both files are safe to share:** access tokens, cookies,
-OAuth codes, and emails are redacted before anything is written. Attach
-`diagnostic_report.txt` to a GitHub issue (skim it first) and the cause is
-usually obvious.
-
-> On a headless **server/VPS** you can't open a browser, so clearance can't be
-> earned there — pass `--report-only`, and do the clearance step on a machine
-> with a display (or route traffic through a residential connection, e.g. a
-> home-PC exit node), since datacenter IPs are where Cloudflare is strictest.
-
----
-
-## Collaboration & support
-
-Need a hand getting this running? Open a [GitHub issue](../../issues) for bugs (for setup/auth problems, attach the redacted `diagnostic_report.txt` from `python tests/diagnostic.py`), start a [discussion](../../discussions) to share ideas, or send a pull request.
-
-And if you're working on something interesting, or looking for someone to build it, I'm always open to a chat. Feel free to reach out:
-
-- X: [@sums001](https://x.com/sums001)
-- Email: [devsum0101@gmail.com](mailto:devsum0101@gmail.com)
-- Discord: `sum_s_s`
-
----
-
-## License
-
-Released under the [MIT License](LICENSE). As this is an unofficial project, you remain responsible for complying with Microsoft's terms of service.
-
----
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=sums001%2FWindows-Copilot-API&type=timeline&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=sums001/Windows-Copilot-API&type=timeline&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=sums001/Windows-Copilot-API&type=timeline&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=sums001/Windows-Copilot-API&type=timeline&legend=top-left" />
- </picture>
-</a>
+*注意：在向客户端发送画图请求时，请勿附加本地图片文件，仅用文本命令描述（如：“画一只可爱的胖橘猫”），生图完毕后前端会自动渲染显示出图片。*
