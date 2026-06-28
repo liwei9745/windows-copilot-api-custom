@@ -91,13 +91,14 @@ graph TD
 
 ---
 
-### Option 2: Linux Server Deployment
+### Option 2: Linux Server (VPS) Deployment
 
-Since Linux servers usually do not have a graphical interface, we use the **Session Sync Mechanism** to deploy:
+Since Linux servers usually do not have a graphical interface, we use the **Session Sync Mechanism** combined with anti-wind-control proxy routing:
 
-1. **Generate Session**: Complete step `4` of **Option 1** on a machine with display to generate the `session` folder.
-2. **Clone & Install**:
-   Run on your Linux server:
+1. **Sync Local Session**:
+   * Complete step `4` of **Option 1** on a machine with display to generate the `session` folder.
+   * Upload the generated `session` directory to the project root folder on your Linux server via `scp` or any transfer tool.
+2. **Install Dependencies**:
    ```bash
    git clone https://github.com/liwei9745/windows-copilot-api-custom.git
    cd windows-copilot-api-custom
@@ -106,30 +107,78 @@ Since Linux servers usually do not have a graphical interface, we use the **Sess
    pip install -r requirements.txt
    playwright install chromium
    ```
-3. **Sync Session**: Copy the generated `session` folder from your local machine to the project root folder on the Linux server.
-4. **Set Proxy & Start**:
+3. **Bypass IP Risk & Cloudflare (Warp Deployment)**:
+   Most global VPS hosts have direct access to foreign websites. However, if your VPS IP belongs to common datacenter ranges, it can easily trigger CF security gates.
+   **Recommended Solution: Deploy Cloudflare WARP proxy**. You can use one-click scripts to configure WARP socks5 proxy listening on port `40000` locally:
    ```bash
-   export HTTP_PROXY="http://127.0.0.1:10808"
-   export HTTPS_PROXY="http://127.0.0.1:10808"
-   export ALL_PROXY="socks5://127.0.0.1:10808"
+   # Register and set warp-cli mode to proxy:
+   warp-cli register
+   warp-cli set-mode proxy
+   warp-cli connect
+   ```
+   Once connected, start the service with WARP routing to bypass CF blocks cleanly:
+   ```bash
+   export ALL_PROXY="socks5://127.0.0.1:40000"
    python app.py
    ```
 
 ---
 
-### Option 3: Docker Deployment
+### Option 3: Docker Complete Deployment Guide (Step-by-Step)
 
-1. **Sync Session**: Create a `session` folder under the project root, making sure it contains the authorization token generated in the login steps.
-2. **Set Compose Proxy** (Optional): If Docker needs to share host proxy:
-   ```yaml
-   environment:
-     HTTP_PROXY: "http://host.docker.internal:10808"
-     HTTPS_PROXY: "http://host.docker.internal:10808"
+To achieve isolated running environment, follow these steps:
+
+#### Step 1: Prepare Login Session
+1. Clone and install dependencies on your **local machine with screen**.
+2. Run `python -m copilot login` and sign in.
+3. Once completed, a `session` folder containing credentials will be created in your project root.
+
+#### Step 2: Upload Files
+1. Create a deployment directory on your server (e.g. `/app/windows-copilot-api-custom`).
+2. Upload the `session` folder generated in Step 1 to this directory.
+3. Upload `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `app.py`, `server` folder, and `copilot` folder to this directory.
+   *The final server directory structure should look like this:*
+   ```text
+   /app/windows-copilot-api-custom/
+   ├── session/               <-- Uploaded login credentials
+   ├── server/
+   ├── copilot/
+   ├── Dockerfile
+   ├── docker-compose.yml
+   ├── requirements.txt
+   └── app.py
    ```
-3. **Build & Run**:
-   ```bash
-   docker-compose up -d --build
-   ```
+
+#### Step 3: Configure Proxy Environments (Depending on VPS Status)
+Open `docker-compose.yml` file.
+* **Case A: Global VPS with clean IP**: Use default configurations.
+* **Case B: Domestic Server or Routing via Host Proxy**: Modify `environment` variables in `docker-compose.yml` (Ensure **Allow LAN** is enabled in Clash on host):
+  ```yaml
+  environment:
+    HTTP_PROXY: "http://host.docker.internal:10808"
+    HTTPS_PROXY: "http://host.docker.internal:10808"
+  ```
+  *(Note: This custom repo has added `extra_hosts` mapping inside `docker-compose.yml` to resolve `host.docker.internal` cleanly on Linux hosts.)*
+* **Case C: Routing via host Warp proxy**:
+  ```yaml
+  environment:
+    ALL_PROXY: "socks5://host.docker.internal:40000"
+  ```
+
+#### Step 4: Build and Start
+Run this command under the deployment folder on your server:
+```bash
+docker-compose up -d --build
+```
+
+#### Step 5: Verify Status
+Run curl to test:
+```bash
+curl -X POST http://127.0.0.1:18521/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"Hi"}],"model":"copilot"}'
+```
+If it returns standard OpenAI-formatted JSON containing `chatcmpl-...` id, your Docker deployment is fully up and running!
 
 ---
 
@@ -141,6 +190,6 @@ Please use the following configurations in your client (e.g. NextChat, LobeChat,
 | :--- | :--- |
 | **Base URL** | `http://127.0.0.1:18521/v1` |
 | **API Key** | Any virtual key (e.g., `sk-virtual-key`) |
-| **Model** | Any model (e.g. `gpt-4o` or `codex`. The backend automatically intercepts and rewrites it to `copilot`) |
+| **Model** | **`copilot`** (If you pass any other model like `gpt-4o` or `codex`, the backend will still rewrite it to `copilot` implicitly) |
 
 *Note: When drawing, please do not attach local image files. Simply write descriptions (e.g., "draw a cute cat").*

@@ -16,4 +16,7 @@ services:
       # Sign in once on the host (`python -m copilot login`) so this folder is
       # populated; the container only does the headless token refresh.
       - ./session:/app/session
+    extra_hosts:
+      # Allows the container to resolve host.docker.internal on Linux hosts
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
