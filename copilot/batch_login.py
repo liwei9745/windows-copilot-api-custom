@@ -1,7 +1,7 @@
-"""Batch multi-account login for Microsoft Copilot.
+"""Batch multi-account login using OAuth URL with default browser.
 
-Opens a visible browser for each account to the OAuth authorize page.
-User manually logs in. Script auto-captures the redirect URL.
+Opens the OAuth URL in the user's DEFAULT browser (not Playwright).
+User logs into Microsoft there, then pastes the redirect URL back.
 
 Usage:
     python -m copilot login accounts.txt
@@ -13,6 +13,7 @@ import re
 import sys
 import time
 import urllib.parse
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -47,7 +48,6 @@ def build_oauth_url() -> str:
 
 
 def extract_token_from_url(url: str) -> str:
-    """Extract access_token from URL fragment or query."""
     m = re.search(r"access_token=([^&]+)", url)
     if m:
         return urllib.parse.unquote(m.group(1))
@@ -55,147 +55,6 @@ def extract_token_from_url(url: str) -> str:
     if m:
         return urllib.parse.unquote(m.group(1))
     return ""
-
-
-def login_one(username: str, account_index: int, log_fh=None) -> bool:
-    """Login one account via OAuth in a visible browser.
-
-    1. Opens visible browser → navigates to OAuth authorize page
-    2. User manually logs in the browser
-    3. After redirect, script extracts access_token from URL
-    4. Captures cookies and saves credentials
-    5. Closes browser, moves to next account
-    """
-    session_dir = f"{SESSION_DIR}/account_{account_index}"
-    token_path = f"{session_dir}/token.json"
-    os.makedirs(session_dir, exist_ok=True)
-
-    _log(f"\n{'='*60}", log_fh)
-    _log(f"[{account_index}] Account: {username}", log_fh)
-    _log(f"[{account_index}] Opening browser to OAuth login page...", log_fh)
-    _log("", log_fh)
-    _log("  >> A browser window should appear on your screen <<", log_fh)
-    _log("  >> Log into your Microsoft account in that window <<", log_fh)
-    _log("  >> After login, the page will redirect <<", log_fh)
-    _log("  >> Copy the FINAL address bar URL and paste it here <<", log_fh)
-    _log("", log_fh)
-    _log("  (Type 'skip' to skip, 'abort' to stop all)", log_fh)
-    _log("", log_fh)
-
-    # Try to open the browser via Playwright first
-    oauth_url = build_oauth_url()
-    browser_opened = False
-
-    try:
-        from playwright.sync_api import sync_playwright, Error as PwError
-        from .useragent import CHROME_UA
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            context = browser.new_context(user_agent=CHROME_UA)
-            page = context.new_page()
-            page.goto(oauth_url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(2000)
-            browser_opened = True
-            _log(f"[{account_index}] Browser is open. Waiting for you to complete login...", log_fh)
-
-            # Wait for redirect from login.live.com to oauth20_desktop.srf
-            redirect_detected = False
-            redirect_url = ""
-
-            # Poll for redirect (max 5 min)
-            deadline = time.time() + 300
-            while time.time() < deadline:
-                try:
-                    current_url = page.url
-                    if "oauth20_desktop.srf" in current_url:
-                        redirect_detected = True
-                        redirect_url = current_url
-                        _log(f"[{account_index}] Redirect detected!", log_fh)
-                        break
-                    if "_c_Auth" in current_url or "copilot.microsoft.com" in current_url and "access_token" in current_url:
-                        redirect_detected = True
-                        redirect_url = current_url
-                        break
-                except Exception:
-                    pass
-
-                # Also check if page content contains the token
-                try:
-                    body = page.content()
-                    for m in re.finditer(r'access_token=([^&\s"<>]+)', body):
-                        redirect_detected = True
-                        redirect_url = current_url
-                        break
-                except Exception:
-                    pass
-
-                if redirect_detected:
-                    break
-
-                try:
-                    page.wait_for_timeout(1000)
-                except Exception:
-                    break
-
-            browser.close()
-
-            if redirect_detected and redirect_url:
-                _log(f"[{account_index}] Redirect URL captured.", log_fh)
-                access_token = extract_token_from_url(redirect_url)
-                if access_token:
-                    _log(f"[{account_index}] Token extracted! ({access_token[:30]}...)", log_fh)
-                    # Capture cookies via headless Playwright
-                    _log(f"[{account_index}] Capturing cookies...", log_fh)
-                    cookies = _capture_cookies()
-                    auth = {
-                        "cookies": cookies,
-                        "access_token": access_token,
-                        "identity_type": "microsoft",
-                        "saved_at": time.time(),
-                    }
-                    Path(token_path).write_text(json.dumps(auth, indent=2), encoding="utf-8")
-                    _log(f"[{account_index}] SUCCESS: Credentials saved to {token_path}", log_fh)
-                    return True
-                else:
-                    _log(f"[{account_index}] Token not found in URL: {redirect_url[:100]}", log_fh)
-            else:
-                _log(f"[{account_index}] No redirect detected within timeout.", log_fh)
-
-    except Exception as e:
-        _log(f"[{account_index}] Browser error: {e}", log_fh)
-
-    # Fallback: manual URL paste
-    if not browser_opened:
-        _log(f"[{account_index}] Could not open browser. Please open this URL manually:", log_fh)
-        _log(f"  {oauth_url}", log_fh)
-        _log("", log_fh)
-
-    _log(f"[{account_index}] Paste the redirect URL (or 'skip'/'abort'):", log_fh)
-    print("  > ", end="", flush=True)
-    user_input = sys.stdin.readline().strip()
-
-    if user_input.lower() in ("skip", "abort"):
-        if user_input.lower() == "abort":
-            raise KeyboardInterrupt()
-        return False
-
-    access_token = extract_token_from_url(user_input)
-    if not access_token:
-        _log(f"[{account_index}] Could not extract token from input.", log_fh)
-        return False
-
-    _log(f"[{account_index}] Token extracted! ({access_token[:30]}...)", log_fh)
-    cookies = _capture_cookies()
-    auth = {
-        "cookies": cookies,
-        "access_token": access_token,
-        "identity_type": "microsoft",
-        "saved_at": time.time(),
-    }
-    Path(token_path).write_text(json.dumps(auth, indent=2), encoding="utf-8")
-    _log(f"[{account_index}] SUCCESS: Credentials saved to {token_path}", log_fh)
-    return True
 
 
 def _capture_cookies() -> dict:
@@ -216,6 +75,80 @@ def _capture_cookies() -> dict:
         return cookies
     except Exception:
         return {}
+
+
+def login_one(username: str, account_index: int, log_fh=None) -> bool:
+    """Login one account via OAuth using user's default browser."""
+    session_dir = f"{SESSION_DIR}/account_{account_index}"
+    token_path = f"{session_dir}/token.json"
+    os.makedirs(session_dir, exist_ok=True)
+
+    _log(f"\n{'='*60}", log_fh)
+    _log(f"[{account_index}] Account: {username}", log_fh)
+    _log("", log_fh)
+
+    oauth_url = build_oauth_url()
+
+    _log("#" * 60, log_fh)
+    _log("  Step 1: A browser tab will open to Microsoft login.", log_fh)
+    _log("         If it doesn't, open this URL manually:", log_fh)
+    _log(f"  {oauth_url}", log_fh)
+    _log("", log_fh)
+    _log("  Step 2: Log into your Microsoft account in the browser.", log_fh)
+    _log("  Step 3: After login, the page redirects.", log_fh)
+    _log("  Step 4: Copy the ENTIRE address bar URL.", log_fh)
+    _log("  Step 5: Paste it below and press Enter.", log_fh)
+    _log("", log_fh)
+    _log("  (Type 'skip' to skip this account, 'abort' to stop)", log_fh)
+    _log("#" * 60, log_fh)
+    _log("", log_fh)
+
+    # Open in user's default browser (no Playwright flash/crash)
+    try:
+        webbrowser.open(oauth_url)
+        _log(f"[{account_index}] Browser opened (or URL printed above).", log_fh)
+    except Exception as e:
+        _log(f"[{account_index}] Could not open browser: {e}", log_fh)
+        _log(f"  Please open this URL manually:", log_fh)
+        _log(f"  {oauth_url}", log_fh)
+
+    _log(f"[{account_index}] Waiting for you to paste the redirect URL...", log_fh)
+
+    try:
+        user_input = input("  Paste redirect URL> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        _log("\n[{account_index}] Interrupted.", log_fh)
+        return False
+
+    if user_input.lower() == "skip":
+        _log(f"[{account_index}] Skipped.", log_fh)
+        return False
+    if user_input.lower() == "abort":
+        _log(f"[{account_index}] Aborted.", log_fh)
+        raise KeyboardInterrupt()
+
+    access_token = extract_token_from_url(user_input)
+    if not access_token:
+        _log(f"[{account_index}] Could not extract token from input.", log_fh)
+        _log(f"  Received: {user_input[:100]}", log_fh)
+        return False
+
+    _log(f"[{account_index}] Token extracted! ({access_token[:30]}...)", log_fh)
+
+    # Capture cookies headlessly
+    _log(f"[{account_index}] Capturing cookies via headless browser...", log_fh)
+    cookies = _capture_cookies()
+    _log(f"[{account_index}] Got {len(cookies)} cookies.", log_fh)
+
+    auth = {
+        "cookies": cookies,
+        "access_token": access_token,
+        "identity_type": "microsoft",
+        "saved_at": time.time(),
+    }
+    Path(token_path).write_text(json.dumps(auth, indent=2), encoding="utf-8")
+    _log(f"[{account_index}] SUCCESS: Credentials saved to {token_path}", log_fh)
+    return True
 
 
 total = 0
@@ -252,10 +185,15 @@ def login_from_file(file_path: str) -> int:
 
         total = len(accounts)
         _log(f"Found {total} accounts.", log_fh)
-        _log("For each account:", log_fh)
-        _log("  1. Browser opens to Microsoft login page", log_fh)
-        _log("  2. Log into your account in that browser", log_fh)
-        _log("  3. After redirect, paste the address bar URL back here", log_fh)
+        _log("", log_fh)
+        _log("=" * 60, log_fh)
+        _log("  LOGIN INSTRUCTIONS", log_fh)
+        _log("=" * 60, log_fh)
+        _log("  For each account:", log_fh)
+        _log("    1. A browser tab opens to Microsoft login", log_fh)
+        _log("    2. Log into that Microsoft account", log_fh)
+        _log("    3. After redirect, copy the address bar URL", log_fh)
+        _log("    4. Paste it here and press Enter", log_fh)
         _log("", log_fh)
 
         success_count = 0
