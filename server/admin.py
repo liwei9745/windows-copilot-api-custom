@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import threading
 from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -10,6 +11,72 @@ from copilot.auth import SESSION_DIR
 from copilot.batch_login import build_oauth_url, extract_token_from_url, _capture_cookies
 
 admin_router = APIRouter()
+
+# Global state for login tasks
+_login_tasks = {}
+
+def playwright_login_task(index: int, email: str):
+    """Run Playwright to open a visible browser, wait for user to login, and capture the token automatically."""
+    _login_tasks[index] = {"status": "running", "message": "浏览器已弹出，请在弹出的窗口中登录..."}
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            
+            oauth_url = build_oauth_url()
+            if "prompt=login" not in oauth_url:
+                oauth_url += "&prompt=login"
+                
+            _login_tasks[index]["message"] = "正在等待您完成登录与安全验证..."
+            page.goto(oauth_url)
+            
+            # Poll for the redirect URL
+            access_token = ""
+            deadline = time.time() + 300
+            while time.time() < deadline:
+                try:
+                    current_url = page.url
+                    if "oauth20_desktop.srf" in current_url and "access_token" in current_url:
+                        access_token = extract_token_from_url(current_url)
+                        break
+                    
+                    if page.is_closed():
+                        _login_tasks[index] = {"status": "error", "message": "浏览器被手动关闭，登录中止。"}
+                        return
+                        
+                    page.wait_for_timeout(500)
+                except Exception:
+                    break
+            
+            browser.close()
+            
+            if not access_token:
+                _login_tasks[index] = {"status": "error", "message": "超时或未能捕获到 Token。"}
+                return
+                
+            _login_tasks[index]["message"] = "Token 捕获成功，正在静默获取 Cookie..."
+            cookies = _capture_cookies()
+            
+            session_dir = f"{SESSION_DIR}/account_{index}"
+            os.makedirs(session_dir, exist_ok=True)
+            token_path = f"{session_dir}/token.json"
+            
+            auth = {
+                "cookies": cookies,
+                "access_token": access_token,
+                "identity_type": "microsoft",
+                "saved_at": time.time(),
+            }
+            Path(token_path).write_text(json.dumps(auth, indent=2), encoding="utf-8")
+            
+            from server.api import hot_reload_pool
+            hot_reload_pool()
+            
+            _login_tasks[index] = {"status": "success", "message": "登录完成并已自动热加载！"}
+    except Exception as e:
+        _login_tasks[index] = {"status": "error", "message": str(e)}
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -30,28 +97,25 @@ HTML_TEMPLATE = """
         .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 14px; transition: background 0.2s; }
         .btn-primary { background: #0078d4; color: white; }
         .btn-primary:hover { background: #106ebe; }
-        .btn-success { background: #107c10; color: white; }
-        .btn-success:hover { background: #0b5a0b; }
-        .action-area { display: flex; gap: 10px; align-items: center; }
-        .input-url { padding: 8px; width: 250px; border: 1px solid #ccc; border-radius: 4px; }
         .guide { background: #fff4ce; border-left: 4px solid #d83b01; padding: 15px; margin-bottom: 20px; font-size: 0.95em; }
+        .task-msg { margin-top: 8px; font-size: 0.9em; color: #d83b01; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Windows Copilot API - 多账号管理面板</h1>
         <div class="guide">
-            <strong>使用说明：</strong><br>
-            1. 点击【弹出登录窗口】，在弹出的新标签页中正常登录微软账号。<br>
-            2. 登录完成后，页面会跳转到一个白板安全警告页，请<b>复制此时地址栏里完整的长链接</b>。<br>
-            3. 将链接粘贴到对应账号的输入框内，点击【提交并保存】。<br>
-            <i>保存成功后，系统会自动热加载该账号，无需重启服务！</i>
+            <strong>全新全自动体验：</strong><br>
+            您现在<b>不再需要手动复制和粘贴 URL！</b><br>
+            点击【一键唤起自动登录】，系统会为您自动打开一个干净的浏览器窗口。您在里面正常登录、过验证码。登录完成后，窗口会<b>瞬间自动关闭</b>，并在后台为您自动热加载配置！
         </div>
         
         <div id="account-list">加载中...</div>
     </div>
 
     <script>
+        let pollingIntervals = {};
+
         async function loadAccounts() {
             const res = await fetch('/api/admin/accounts');
             const data = await res.json();
@@ -61,18 +125,16 @@ HTML_TEMPLATE = """
             data.accounts.forEach(acc => {
                 const card = document.createElement('div');
                 card.className = 'account-card';
+                card.id = `card_${acc.index}`;
                 
                 const statusHtml = acc.is_logged_in 
                     ? '<span class="status-badge status-ok">已登录 (就绪)</span>' 
                     : '<span class="status-badge status-fail">未登录 (或已过期)</span>';
                     
-                const oauthUrl = `/api/admin/oauth_url?email=${encodeURIComponent(acc.email)}`;
-                
                 let actionHtml = `
-                    <div class="action-area">
-                        <button class="btn btn-primary" onclick="window.open('${oauthUrl}', '_blank', 'width=600,height=700')">1. 弹出登录窗口</button>
-                        <input type="text" id="url_${acc.index}" class="input-url" placeholder="2. 在此粘贴登录后的地址栏URL...">
-                        <button class="btn btn-success" onclick="submitUrl(${acc.index}, '${acc.email}')">3. 提交并保存</button>
+                    <div>
+                        <button class="btn btn-primary" id="btn_${acc.index}" onclick="startAutoLogin(${acc.index}, '${acc.email}')">🚀 一键唤起自动登录</button>
+                        <div id="msg_${acc.index}" class="task-msg"></div>
                     </div>
                 `;
                 
@@ -87,35 +149,37 @@ HTML_TEMPLATE = """
             });
         }
 
-        async function submitUrl(index, email) {
-            const urlInput = document.getElementById(`url_${index}`).value;
-            if (!urlInput) {
-                alert("请先粘贴跳转后的地址栏 URL！");
-                return;
-            }
-            
-            const btn = event.target;
-            btn.innerText = "处理中 (需几秒抓取Cookie)...";
+        async function startAutoLogin(index, email) {
+            const btn = document.getElementById(`btn_${index}`);
+            const msg = document.getElementById(`msg_${index}`);
             btn.disabled = true;
+            btn.innerText = "处理中...";
             
-            try {
-                const res = await fetch('/api/admin/submit_token', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ index: index, email: email, redirect_url: urlInput })
-                });
-                const data = await res.json();
-                if (data.status === 'success') {
-                    alert('账号 ' + email + ' 登录并保存成功！已自动热加载。');
-                    loadAccounts();
-                } else {
-                    alert('失败: ' + data.message);
+            await fetch('/api/admin/start_login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ index: index, email: email })
+            });
+            
+            pollingIntervals[index] = setInterval(() => checkStatus(index), 1000);
+        }
+
+        async function checkStatus(index) {
+            const res = await fetch(`/api/admin/task_status?index=${index}`);
+            const data = await res.json();
+            const msg = document.getElementById(`msg_${index}`);
+            const btn = document.getElementById(`btn_${index}`);
+            
+            if (data.status) {
+                msg.innerText = data.message;
+                if (data.status === 'success' || data.status === 'error') {
+                    clearInterval(pollingIntervals[index]);
+                    btn.disabled = false;
+                    btn.innerText = "🚀 重新一键唤起";
+                    if (data.status === 'success') {
+                        setTimeout(loadAccounts, 1500);
+                    }
                 }
-            } catch (e) {
-                alert('请求异常: ' + e);
-            } finally {
-                btn.innerText = "3. 提交并保存";
-                btn.disabled = false;
             }
         }
 
@@ -141,7 +205,6 @@ def get_accounts():
                 continue
             email = line.split("----")[0].strip()
             
-            # Check login status
             is_logged_in = False
             token_path = Path(f"{SESSION_DIR}/account_{i}/token.json")
             if token_path.exists():
@@ -159,43 +222,16 @@ def get_accounts():
             })
     return {"accounts": accounts}
 
-@admin_router.get("/api/admin/oauth_url")
-def get_oauth_url(email: str):
-    # Redirect directly to the OAuth URL
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url=build_oauth_url())
-
-class SubmitTokenReq(BaseModel):
+class StartLoginReq(BaseModel):
     index: int
     email: str
-    redirect_url: str
 
-@admin_router.post("/api/admin/submit_token")
-def submit_token(req: SubmitTokenReq):
-    try:
-        access_token = extract_token_from_url(req.redirect_url)
-        if not access_token:
-            return JSONResponse(status_code=400, content={"status": "error", "message": "无法从提供的 URL 中提取 access_token，请确保复制了完整的地址栏链接。"})
-        
-        # Capture cookies headlessly
-        cookies = _capture_cookies()
-        
-        session_dir = f"{SESSION_DIR}/account_{req.index}"
-        os.makedirs(session_dir, exist_ok=True)
-        token_path = f"{session_dir}/token.json"
-        
-        auth = {
-            "cookies": cookies,
-            "access_token": access_token,
-            "identity_type": "microsoft",
-            "saved_at": time.time(),
-        }
-        Path(token_path).write_text(json.dumps(auth, indent=2), encoding="utf-8")
-        
-        # Trigger hot-reload in api.py
-        from server.api import hot_reload_pool
-        hot_reload_pool()
-        
-        return {"status": "success"}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+@admin_router.post("/api/admin/start_login")
+def start_login(req: StartLoginReq):
+    threading.Thread(target=playwright_login_task, args=(req.index, req.email), daemon=True).start()
+    return {"status": "started"}
+
+@admin_router.get("/api/admin/task_status")
+def task_status(index: int):
+    task = _login_tasks.get(index, {})
+    return JSONResponse(content=task)
