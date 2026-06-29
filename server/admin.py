@@ -25,6 +25,16 @@ def playwright_login_task(index: int, email: str):
             context = browser.new_context()
             page = context.new_page()
             
+            # Inject a script to capture the token URL immediately before Microsoft erases it
+            page.add_init_script("""
+                window.__capturedTokenUrl = "";
+                setInterval(() => {
+                    if (window.location.href.includes('access_token=') || window.location.href.includes('code=')) {
+                        window.__capturedTokenUrl = window.location.href;
+                    }
+                }, 50);
+            """)
+            
             oauth_url = build_oauth_url()
             if "prompt=login" not in oauth_url:
                 oauth_url += "&prompt=login"
@@ -37,14 +47,19 @@ def playwright_login_task(index: int, email: str):
             deadline = time.time() + 300
             while time.time() < deadline:
                 try:
-                    current_url = page.url
-                    if "oauth20_desktop.srf" in current_url and "access_token" in current_url:
-                        access_token = extract_token_from_url(current_url)
-                        break
-                    
                     if page.is_closed():
                         _login_tasks[index] = {"status": "error", "message": "浏览器被手动关闭，登录中止。"}
                         return
+                        
+                    captured_url = page.evaluate("window.__capturedTokenUrl")
+                    if captured_url:
+                        access_token = extract_token_from_url(captured_url)
+                        break
+                        
+                    current_url = page.url
+                    if ("oauth20_desktop.srf" in current_url) and ("access_token=" in current_url or "code=" in current_url):
+                        access_token = extract_token_from_url(current_url)
+                        break
                         
                     page.wait_for_timeout(500)
                 except Exception:
