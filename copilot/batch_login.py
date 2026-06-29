@@ -43,6 +43,7 @@ def build_oauth_url() -> str:
         "response_type": "token",
         "redirect_uri": REDIRECT_URI,
         "scope": SCOPE,
+        "prompt": "login",  # Forces the login screen to appear (ignores SSO)
     }
     return "https://login.live.com/oauth20_authorize.srf?" + urllib.parse.urlencode(params)
 
