@@ -21,34 +21,44 @@ def main(argv) -> int:
             count = login_from_file(account_file)
             return 0 if count > 0 else 1
         else:
-            import json
             import time
+            from playwright.sync_api import Error as PlaywrightError
+
             bot = BrowserCopilot(headless=False, proxy=proxy)
-            result = bot.login()
-            if not result.get("access_token"):
-                # Browser is still open and user is signed in.
-                # Google logins prevent signed_in() from detecting, so we
-                # manually trigger a chat warmup to mint and capture the token.
-                print("[login] Detecting token via warmup turn...")
+            
+            # Manually control the login flow so we can warmup before closing browser.
+            try:
+                bot.close()
+                bot.start(headless=False)
                 bot._install_ws_listener()
-                if bot._send_warmup():
+                print("\nA browser window is open at copilot.microsoft.com.\n"
+                      "Sign in, then WAIT — the token will be captured automatically.\n"
+                      "Press Enter once you're signed in (or if already signed in).\n")
+                input()
+                
+                print("[login] Sending warmup to mint chat token...")
+                if bot._send_warmup("Hi"):
                     deadline = time.time() + 90
                     while time.time() < deadline:
                         tok = bot.access_token()
                         if tok:
+                            print("[login] Token captured! Exporting full auth...")
                             token_path = "session/token.json"
-                            data = json.load(open(token_path)) if os.path.exists(token_path) else {}
-                            data["access_token"] = tok
-                            data["identity_type"] = bot._captured_identity_type or "google"
-                            json.dump(data, open(token_path, "w"), indent=2)
-                            print("[login] Token captured via warmup!")
+                            bot.export_auth(path=token_path, stamp=time.time())
+                            print("[login] Full auth (cookies + token) saved.")
                             break
                         try:
                             bot._page.wait_for_timeout(1000)
-                        except Exception:
+                        except PlaywrightError:
                             break
+                
                 if not bot.access_token():
-                    print("[login] WARNING: Could not capture token. Please manually click inside the Copilot page and send any message, then wait.")
+                    print("[login] WARNING: Token not captured. Trying export anyway...")
+                    token_path = "session/token.json"
+                    bot.export_auth(path=token_path, stamp=time.time())
+                    print("[login] Session saved. Try restarting the API service.")
+            finally:
+                bot.close()
             return 0
     if cmd == "ask":
         prompt = " ".join(argv[1:]) or "Hello!"

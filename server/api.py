@@ -2,6 +2,7 @@
 
 import threading
 import time
+import os
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -56,16 +57,17 @@ def hot_reload_pool():
     with _pool_lock:
         _account_dirs = sorted(glob.glob("session/account_*"))
         new_clients = []
+        _proxy = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or None
         if _account_dirs:
             for d in _account_dirs:
                 new_clients.append({
-                    "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir=d),
+                    "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir=d, proxy=_proxy),
                     "lock": threading.Lock()
                 })
             print(f"[pool] Hot-reloaded {len(new_clients)} accounts for round-robin routing.")
         else:
             new_clients.append({
-                "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir="session"),
+                "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir="session", proxy=_proxy),
                 "lock": threading.Lock()
             })
             print("[pool] Hot-reloaded single-account mode.")

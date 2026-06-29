@@ -49,8 +49,7 @@ def load_auth(
             cached = json.loads(p.read_text(encoding="utf-8"))
             if cached.get("access_token") and (time.time() - cached.get("saved_at", 0)) < max_age:
                 return cached
-            # File exists but token is null or expired. When auto_login is off,
-            # fail immediately instead of starting a 30-second headless browser.
+            # Token expired or missing. Fail fast to avoid 30s headless browser timeout.
             if not auto_login:
                 raise RuntimeError(
                     "Not signed in (no access token in the browser profile). "
@@ -59,8 +58,7 @@ def load_auth(
         except (ValueError, OSError):
             pass  # corrupt/unreadable -> refresh below
     else:
-        # No saved session file at all. Unless auto_login is True (interactive),
-        # fail fast without starting a browser to avoid blocking.
+        # No saved session file at all.
         if not auto_login:
             raise RuntimeError(
                 "Not signed in (no access token in the browser profile). "
