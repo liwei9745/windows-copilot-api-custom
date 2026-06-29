@@ -47,7 +47,7 @@ def login_one(username: str, password: str, account_index: int, log_fh=None) -> 
     try:
         from .browser import BrowserCopilot
 
-        bot = BrowserCopilot(profile_dir=profile_dir, headless=False, interactive_clear=True, headless_clear=False)
+        bot = BrowserCopilot(profile_dir=profile_dir, headless=False)
         result = bot.login(path=token_path, timeout=300)
 
         if result.get("access_token"):
