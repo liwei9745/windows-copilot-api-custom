@@ -22,29 +22,58 @@ from .schemas import ChatCompletionRequest
 
 import glob
 import itertools
+import threading
+
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse, StreamingResponse
+
+from copilot import CopilotClient
+from copilot.driver import ClearanceRequired
+
+from .config import MODEL_NAME, RATE_LIMIT_BURST, RATE_LIMIT_RPM
+from .openai_format import (
+    completion_response,
+    new_id,
+    sse_event,
+    stream_chunk,
+)
+from .prompt import messages_to_prompt
+from .ratelimit import TokenBucket
+from .schemas import ChatCompletionRequest
 
 app = FastAPI(title="Copilot OpenAI-compatible API", version="1.0.0")
 
-# Auto-detect multiple account directories under "session" (e.g. session/account_*)
-# If found, build a client pool for round-robin scheduling to bypass rate limits and risk control.
-_account_dirs = sorted(glob.glob("session/account_*"))
-_clients = []
-if _account_dirs:
-    for d in _account_dirs:
-        _clients.append({
-            "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir=d),
-            "lock": threading.Lock()
-        })
-    print(f"[pool] Loaded {len(_clients)} accounts for round-robin routing.")
-else:
-    _clients.append({
-        "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir="session"),
-        "lock": threading.Lock()
-    })
-    print("[pool] Running in single-account mode (default 'session' folder).")
+# Import and include the Admin Web UI
+from .admin import admin_router
+app.include_router(admin_router)
 
-_client_pool = itertools.cycle(_clients)
+_clients = []
+_client_pool = itertools.cycle([])
 _pool_lock = threading.Lock()
+
+def hot_reload_pool():
+    global _clients, _client_pool
+    with _pool_lock:
+        _account_dirs = sorted(glob.glob("session/account_*"))
+        new_clients = []
+        if _account_dirs:
+            for d in _account_dirs:
+                new_clients.append({
+                    "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir=d),
+                    "lock": threading.Lock()
+                })
+            print(f"[pool] Hot-reloaded {len(new_clients)} accounts for round-robin routing.")
+        else:
+            new_clients.append({
+                "client": CopilotClient(interactive_clear=False, headless_clear=True, session_dir="session"),
+                "lock": threading.Lock()
+            })
+            print("[pool] Hot-reloaded single-account mode.")
+        _clients = new_clients
+        _client_pool = itertools.cycle(_clients)
+
+# Initial load
+hot_reload_pool()
 
 def get_next_client():
     with _pool_lock:
