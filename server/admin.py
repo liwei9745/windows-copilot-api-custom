@@ -8,7 +8,6 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from copilot.auth import SESSION_DIR
-from copilot.batch_login import build_oauth_url, extract_token_from_url, _capture_cookies
 
 admin_router = APIRouter()
 
@@ -16,82 +15,33 @@ admin_router = APIRouter()
 _login_tasks = {}
 
 def playwright_login_task(index: int, email: str):
-    """Run Playwright to open a visible browser, wait for user to login, and capture the token automatically."""
-    _login_tasks[index] = {"status": "running", "message": "浏览器已弹出，请在弹出的窗口中登录..."}
+    """Run BrowserCopilot.login() to let the user sign in on copilot.microsoft.com.
+    It automatically captures the ChatAI.ReadWrite token and cookies once the user signs in.
+    """
+    _login_tasks[index] = {"status": "running", "message": "浏览器已弹出，请手动点击【Sign in/登录】并完成验证..."}
     try:
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
-            context = browser.new_context()
-            page = context.new_page()
-            
-            # Inject a script to capture the token URL immediately before Microsoft erases it
-            page.add_init_script("""
-                window.__capturedTokenUrl = "";
-                setInterval(() => {
-                    if (window.location.href.includes('access_token=') || window.location.href.includes('code=')) {
-                        window.__capturedTokenUrl = window.location.href;
-                    }
-                }, 50);
-            """)
-            
-            oauth_url = build_oauth_url()
-            if "prompt=login" not in oauth_url:
-                oauth_url += "&prompt=login"
-                
-            _login_tasks[index]["message"] = "正在等待您完成登录与安全验证..."
-            page.goto(oauth_url)
-            
-            # Poll for the redirect URL
-            access_token = ""
-            deadline = time.time() + 300
-            while time.time() < deadline:
-                try:
-                    if page.is_closed():
-                        _login_tasks[index] = {"status": "error", "message": "浏览器被手动关闭，登录中止。"}
-                        return
-                        
-                    captured_url = page.evaluate("window.__capturedTokenUrl")
-                    if captured_url:
-                        access_token = extract_token_from_url(captured_url)
-                        break
-                        
-                    current_url = page.url
-                    if ("oauth20_desktop.srf" in current_url) and ("access_token=" in current_url or "code=" in current_url):
-                        access_token = extract_token_from_url(current_url)
-                        break
-                        
-                    page.wait_for_timeout(500)
-                except Exception:
-                    break
-            
-            browser.close()
-            
-            if not access_token:
-                _login_tasks[index] = {"status": "error", "message": "超时或未能捕获到 Token。"}
-                return
-                
-            _login_tasks[index]["message"] = "Token 捕获成功，正在静默获取 Cookie..."
-            cookies = _capture_cookies()
-            
-            session_dir = f"{SESSION_DIR}/account_{index}"
-            os.makedirs(session_dir, exist_ok=True)
-            token_path = f"{session_dir}/token.json"
-            
-            auth = {
-                "cookies": cookies,
-                "access_token": access_token,
-                "identity_type": "microsoft",
-                "saved_at": time.time(),
-            }
-            Path(token_path).write_text(json.dumps(auth, indent=2), encoding="utf-8")
-            
+        from copilot.browser import BrowserCopilot
+        
+        session_dir = f"{SESSION_DIR}/account_{index}"
+        profile_dir = f"{session_dir}/profile"
+        token_path = f"{session_dir}/token.json"
+        os.makedirs(session_dir, exist_ok=True)
+        
+        # Initialize BrowserCopilot (headless=False so user can see and solve CAPTCHAs)
+        bot = BrowserCopilot(profile_dir=profile_dir, headless=False)
+        
+        # bot.login() will navigate to copilot.microsoft.com and wait for sign-in detection
+        auth = bot.login(path=token_path, timeout=300)
+        
+        if auth and auth.get("access_token"):
             from server.api import hot_reload_pool
             hot_reload_pool()
-            
             _login_tasks[index] = {"status": "success", "message": "登录完成并已自动热加载！"}
+        else:
+            _login_tasks[index] = {"status": "error", "message": "未能在规定时间内捕获到凭证（可能您未完成登录或手动关闭了窗口）。"}
+            
     except Exception as e:
-        _login_tasks[index] = {"status": "error", "message": str(e)}
+        _login_tasks[index] = {"status": "error", "message": f"出现异常: {str(e)}"}
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -120,9 +70,12 @@ HTML_TEMPLATE = """
     <div class="container">
         <h1>Windows Copilot API - 多账号管理面板</h1>
         <div class="guide">
-            <strong>全新全自动体验：</strong><br>
-            您现在<b>不再需要手动复制和粘贴 URL！</b><br>
-            点击【一键唤起自动登录】，系统会为您自动打开一个干净的浏览器窗口。您在里面正常登录、过验证码。登录完成后，窗口会<b>瞬间自动关闭</b>，并在后台为您自动热加载配置！
+            <strong>最佳实践登录流程：</strong><br>
+            1. 点击【一键唤起登录】，系统会为您弹出微软 Copilot 官网窗口。<br>
+            2. 请在弹出的页面右上角手动点击 <b>Sign In (登录)</b>。<br>
+            3. 输入您的微软账号和密码，完成所有人机验证和双重验证。<br>
+            4. 登录完成后，您<b>什么都不用做</b>，后台监听器会自动截获带有 ChatAI.ReadWrite 权限的专属 Token 和全套 Cookie。<br>
+            <i>截获成功后浏览器会瞬间自毁关闭，同时服务自动热加载该账号！</i>
         </div>
         
         <div id="account-list">加载中...</div>
@@ -148,7 +101,7 @@ HTML_TEMPLATE = """
                     
                 let actionHtml = `
                     <div>
-                        <button class="btn btn-primary" id="btn_${acc.index}" onclick="startAutoLogin(${acc.index}, '${acc.email}')">🚀 一键唤起自动登录</button>
+                        <button class="btn btn-primary" id="btn_${acc.index}" onclick="startAutoLogin(${acc.index}, '${acc.email}')">🚀 一键唤起登录</button>
                         <div id="msg_${acc.index}" class="task-msg"></div>
                     </div>
                 `;
