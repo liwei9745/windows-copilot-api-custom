@@ -49,6 +49,13 @@ def load_auth(
             cached = json.loads(p.read_text(encoding="utf-8"))
             if cached.get("access_token") and (time.time() - cached.get("saved_at", 0)) < max_age:
                 return cached
+            # File exists but token is null or expired. When auto_login is off,
+            # fail immediately instead of starting a 30-second headless browser.
+            if not auto_login:
+                raise RuntimeError(
+                    "Not signed in (no access token in the browser profile). "
+                    "Run `python -m copilot login` and sign in first."
+                )
         except (ValueError, OSError):
             pass  # corrupt/unreadable -> refresh below
     else:

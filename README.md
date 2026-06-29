@@ -75,26 +75,24 @@ graph TD
    playwright install chromium
    ```
 4. **进行首次账号授权登录**：
-   * **单账号登录**：
-     ```bash
-     python -m copilot login
-     ```
-     *此时会弹出一个浏览器窗口。请输入您的 Microsoft 或 Google 账号，登录成功后，浏览器会自动关闭，无需其他操作。*
-   * **🔥 多账号批量登录 (打造高可用账号池)**：
-     如果您有多个微软账号（例如包含用户名、密码的文本文件 `accounts.txt`，格式为：`账号----密码----其他内容`），您可以直接在项目根目录下放好此文件并执行：
-     ```bash
-     python -m copilot login accounts.txt
-     ```
-     *Playwright 会启动浏览器并自动在后台填充账号、密码并模拟点击提交。如果登录中途弹出了安全验证（如需点击验证码或需要微软 Authenticator 手机批准），请在弹出的浏览器中手动过一下即可，浏览器在登录完毕后会自动关闭并把凭证分别归类保存至 `session/account_1`, `session/account_2`... 等独立目录。*
+   **⚠️ 必须先设置代理环境变量**（登录脚本也需要代理才能打开微软页面）：
+   ```powershell
+   $env:HTTP_PROXY="http://127.0.0.1:10808"
+   python -m copilot login
+   ```
+   *此时会弹出一个浏览器窗口。点击「Sign in」，输入您的 Microsoft 或 Google 账号登录。登录完成后脚本会自动发送一条测试消息触发 Token 捕获，浏览器随即自动关闭。*
+
+   > 如果使用 Google 账号登录：由于 Google 登录的 MSAL 缓存已加密，原版脚本无法直接读取 Token。本二创版已内置 WebSocket 温启动补救机制，会自动发送 `hi` 消息来强制触发 Token 生成并捕获。
+
+   * **🔥 多账号批量登录**：同方式二，需要先有 `accounts.txt`。
+
 5. **设置代理并运行服务**：
-   在 PowerShell 中运行以下命令启动服务：
    ```powershell
    $env:HTTP_PROXY="http://127.0.0.1:10808"
    $env:HTTPS_PROXY="http://127.0.0.1:10808"
-   $env:ALL_PROXY="socks5://127.0.0.1:10808"
    python app.py
    ```
-   *服务启动时会自动扫描项目目录下的 `session/account_*`。如果存在多账号凭证，会自动加载为多账号池，并采用 Round-Robin (轮询) 算法对传入的 completions API 请求进行分发路由，完美规避单账号的高频调用限制和风控封锁！*
+   > **注意：不要使用 `ALL_PROXY=socks5://...`**，SOCKS5 会与 curl_cffi 的 TLS 库冲突导致 `TLS connect error`。只使用 `HTTP_PROXY` 和 `HTTPS_PROXY` 即可。
 
 ---
 
