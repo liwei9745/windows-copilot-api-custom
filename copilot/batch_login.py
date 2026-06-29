@@ -79,7 +79,8 @@ def _capture_cookies() -> dict:
 
 
 def login_one(username: str, account_index: int, log_fh=None) -> bool:
-    """Login one account via OAuth using user's default browser."""
+    """Login one account via OAuth using a clean, visible Playwright browser.
+    Auto-captures the redirect URL."""
     session_dir = f"{SESSION_DIR}/account_{account_index}"
     token_path = f"{session_dir}/token.json"
     os.makedirs(session_dir, exist_ok=True)
@@ -91,47 +92,61 @@ def login_one(username: str, account_index: int, log_fh=None) -> bool:
     oauth_url = build_oauth_url()
 
     _log("#" * 60, log_fh)
-    _log("  Step 1: A browser tab will open to Microsoft login.", log_fh)
-    _log("         If it doesn't, open this URL manually:", log_fh)
-    _log(f"  {oauth_url}", log_fh)
-    _log("", log_fh)
-    _log("  Step 2: Log into your Microsoft account in the browser.", log_fh)
-    _log("  Step 3: After login, the page redirects.", log_fh)
-    _log("  Step 4: Copy the ENTIRE address bar URL.", log_fh)
-    _log("  Step 5: Paste it below and press Enter.", log_fh)
-    _log("", log_fh)
-    _log("  (Type 'skip' to skip this account, 'abort' to stop)", log_fh)
+    _log("  Step 1: A CLEAN browser window will open.", log_fh)
+    _log("  Step 2: Please manually copy/paste the account and password.", log_fh)
+    _log("  Step 3: Solve any CAPTCHAs.", log_fh)
+    _log("  Step 4: The window will auto-close when successful!", log_fh)
     _log("#" * 60, log_fh)
     _log("", log_fh)
 
-    # Open in user's default browser (no Playwright flash/crash)
+    access_token = ""
     try:
-        webbrowser.open(oauth_url)
-        _log(f"[{account_index}] Browser opened (or URL printed above).", log_fh)
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            
+            _log(f"[{account_index}] Opening login page...", log_fh)
+            page.goto(oauth_url)
+            
+            _log(f"[{account_index}] Waiting for you to log in. Window will auto-close upon success.", log_fh)
+            
+            # Poll for the redirect URL
+            deadline = time.time() + 300
+            while time.time() < deadline:
+                try:
+                    current_url = page.url
+                    if "oauth20_desktop.srf" in current_url:
+                        _log(f"[{account_index}] Redirect detected!", log_fh)
+                        access_token = extract_token_from_url(current_url)
+                        break
+                    
+                    if page.is_closed():
+                        _log(f"[{account_index}] Browser closed manually.", log_fh)
+                        break
+                        
+                    page.wait_for_timeout(1000)
+                except Exception:
+                    break
+            
+            browser.close()
     except Exception as e:
-        _log(f"[{account_index}] Could not open browser: {e}", log_fh)
-        _log(f"  Please open this URL manually:", log_fh)
-        _log(f"  {oauth_url}", log_fh)
-
-    _log(f"[{account_index}] Waiting for you to paste the redirect URL...", log_fh)
-
-    try:
-        user_input = input("  Paste redirect URL> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        _log("\n[{account_index}] Interrupted.", log_fh)
-        return False
-
-    if user_input.lower() == "skip":
-        _log(f"[{account_index}] Skipped.", log_fh)
-        return False
-    if user_input.lower() == "abort":
-        _log(f"[{account_index}] Aborted.", log_fh)
-        raise KeyboardInterrupt()
-
-    access_token = extract_token_from_url(user_input)
+        _log(f"[{account_index}] Playwright error: {e}", log_fh)
+        
     if not access_token:
-        _log(f"[{account_index}] Could not extract token from input.", log_fh)
-        _log(f"  Received: {user_input[:100]}", log_fh)
+        # Fallback to manual paste if auto-capture failed
+        _log(f"[{account_index}] Could not auto-capture. If you see the warning page, paste the URL here:", log_fh)
+        try:
+            user_input = input("  Paste redirect URL (or 'skip')> ").strip()
+            if user_input.lower() == "skip":
+                return False
+            access_token = extract_token_from_url(user_input)
+        except Exception:
+            return False
+
+    if not access_token:
+        _log(f"[{account_index}] No token obtained.", log_fh)
         return False
 
     _log(f"[{account_index}] Token extracted! ({access_token[:30]}...)", log_fh)
